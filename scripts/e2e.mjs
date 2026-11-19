@@ -120,11 +120,13 @@ try {
   ok(foreign.status === 403, "cross-origin request refused");
   srv.kill();
 
-  // Hook latency budget.
-  const times = [];
-  for (let i = 0; i < 5; i++) times.push(hook("claude-code", "PostToolUse", { session_id: "sess-A", tool_name: "Read" }).ms);
-  times.sort((x, y) => x - y);
-  ok(times[2] < 400, "hook median latency", `${times[2]} ms (incl. shell spawn)`);
+  // Hook latency budget, relative to what a bare shell spawn costs on this
+  // machine right now (antivirus and load can make any spawn slow).
+  const median = (f) => { const t = []; for (let i = 0; i < 5; i++) t.push(f()); t.sort((x, y) => x - y); return t[2]; };
+  const shell = process.platform === "win32" ? "bash" : "sh";
+  const base = median(() => { const t0 = Date.now(); spawnSync(shell, ["-c", "true"]); return Date.now() - t0; });
+  const hookMs = median(() => hook("claude-code", "PostToolUse", { session_id: "sess-A", tool_name: "Read" }).ms);
+  ok(hookMs < 3 * base + 250, "hook median latency", `${hookMs} ms (bare shell spawn here: ${base} ms)`);
 
   await a.close();
   await new Promise((r) => setTimeout(r, 300));
