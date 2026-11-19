@@ -192,6 +192,24 @@ func oneLine(s string, n int) string {
 	return clip(strings.Join(strings.Fields(b.String()), " "), n)
 }
 
+func isControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029
+}
+
+// hasControl reports line breaks or other control characters (spaces, even
+// repeated, are fine: they're legal in file names).
+func hasControl(s string) bool { return strings.IndexFunc(s, isControl) >= 0 }
+
+// stripControl removes control characters without touching spacing.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if isControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // sanitizeReg applies oneLine to every text field of a registration: all of
 // them end up in other models' context (agent lists, briefings, feed).
 func sanitizeReg(r RegisterReq) RegisterReq {
@@ -201,9 +219,9 @@ func sanitizeReg(r RegisterReq) RegisterReq {
 	r.Model = oneLine(r.Model, 80)
 	r.Machine = oneLine(r.Machine, 64)
 	r.Project = oneLine(r.Project, 120)
-	r.ProjectPath = oneLine(r.ProjectPath, 1024)
+	r.ProjectPath = stripControl(r.ProjectPath) // paths keep their exact spacing
 	r.Branch = oneLine(r.Branch, 120)
-	r.SessionID = oneLine(r.SessionID, 200)
+	r.SessionID = stripControl(r.SessionID)
 	r.Via = oneLine(r.Via, 20)
 	r.Delivery = oneLine(r.Delivery, 20)
 	return r

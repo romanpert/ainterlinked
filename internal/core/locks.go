@@ -49,14 +49,22 @@ func scanLock(r scanner) (Lock, error) {
 	return l, err
 }
 
+var (
+	errOutside = errors.New("is outside the project")
+	errBadPath = errors.New("path contains line breaks or control characters")
+)
+
 // NormPattern converts a user path into a project-relative slash pattern.
 func NormPattern(projectPath, p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return "", errors.New("empty path")
 	}
-	if oneLine(p, 1024) != p {
-		return "", errors.New("path contains control characters or line breaks")
+	if hasControl(p) {
+		return "", errBadPath
+	}
+	if len(p) > 4096 {
+		return "", errors.New("path too long")
 	}
 	dir := strings.HasSuffix(p, "/") || strings.HasSuffix(p, `\`)
 	p = filepath.ToSlash(p)
@@ -72,13 +80,13 @@ func NormPattern(projectPath, p string) (string, error) {
 		case strings.HasPrefix(a, b+"/"):
 			p = p[len(root)+1:]
 		default:
-			return "", fmt.Errorf("%s is outside the project %s", p, projectPath)
+			return "", fmt.Errorf("%s: %w %s", p, errOutside, projectPath)
 		}
 	}
 	p = path.Clean(p)
 	p = strings.TrimPrefix(p, "./")
 	if strings.HasPrefix(p, "../") || p == ".." {
-		return "", fmt.Errorf("%s is outside the project", p)
+		return "", fmt.Errorf("%s: %w", p, errOutside)
 	}
 	if p == "." {
 		p = "**"
@@ -301,8 +309,12 @@ func (s *Store) CheckFile(ctx context.Context, agent, file string) (*Lock, error
 		return nil, nil
 	}
 	rel, err := NormPattern(me.ProjectPath, file)
-	if err != nil {
+	switch {
+	case errors.Is(err, errOutside):
 		return nil, nil // outside the project: not ours to police
+	case err != nil:
+		// A path we can't evaluate must not slip past a reservation: fail closed.
+		return &Lock{Pattern: file, Agent: "interlinked", Reason: "refused: " + err.Error()}, nil
 	}
 	live, err := s.liveLocks(ctx, s.db, me.ProjectPath)
 	if err != nil {
