@@ -192,6 +192,33 @@ func oneLine(s string, n int) string {
 	return clip(strings.Join(strings.Fields(b.String()), " "), n)
 }
 
+// sanitizeReg applies oneLine to every text field of a registration: all of
+// them end up in other models' context (agent lists, briefings, feed).
+func sanitizeReg(r RegisterReq) RegisterReq {
+	r.Harness = oneLine(r.Harness, 40)
+	r.Name = oneLine(r.Name, 64)
+	r.Role = oneLine(r.Role, 80)
+	r.Model = oneLine(r.Model, 80)
+	r.Machine = oneLine(r.Machine, 64)
+	r.Project = oneLine(r.Project, 120)
+	r.ProjectPath = oneLine(r.ProjectPath, 1024)
+	r.Branch = oneLine(r.Branch, 120)
+	r.SessionID = oneLine(r.SessionID, 200)
+	r.Via = oneLine(r.Via, 20)
+	r.Delivery = oneLine(r.Delivery, 20)
+	return r
+}
+
+func cleanLabels(in []string) []string {
+	var out []string
+	for _, l := range in {
+		if l = strings.ReplaceAll(oneLine(l, 40), ",", " "); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len([]rune(s)) <= n {
@@ -207,7 +234,7 @@ func event(tx *sql.Tx, ts int64, a *Agent, kind, summary string) {
 		id, name, project = a.ID, a.Name, a.Project
 	}
 	_, _ = tx.Exec(`INSERT INTO events(ts,agent_id,agent_name,project,kind,summary) VALUES(?,?,?,?,?,?)`,
-		ts, id, name, project, kind, clip(summary, 300))
+		ts, id, name, oneLine(project, 120), oneLine(kind, 20), oneLine(summary, 300))
 }
 
 // Prune deletes feed events, expired reservations, and read messages older

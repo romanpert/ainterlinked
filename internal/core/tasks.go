@@ -95,10 +95,10 @@ type TaskReq struct {
 
 func (s *Store) boardFor(a Agent, board string) string {
 	if b := strings.TrimSpace(board); b != "" {
-		return strings.ToLower(b)
+		return strings.ToLower(oneLine(b, 60))
 	}
 	if a.Project != "" {
-		return strings.ToLower(a.Project)
+		return strings.ToLower(oneLine(a.Project, 60))
 	}
 	return "default"
 }
@@ -134,7 +134,7 @@ func (s *Store) CreateTask(ctx context.Context, r TaskReq) (Task, error) {
 		now := s.ms()
 		res, err := tx.Exec(`INSERT INTO tasks(board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,created_at,updated_at)
 			VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?)`, board, oneLine(r.Title, 200), r.Body, prio, assignee.ID, assignee.Name, by.Name, by.ID,
-			joinIDs(r.DependsOn), strings.Join(r.Labels, ","), now, now)
+			joinIDs(r.DependsOn), strings.Join(cleanLabels(r.Labels), ","), now, now)
 		if err != nil {
 			return err
 		}

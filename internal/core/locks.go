@@ -55,6 +55,9 @@ func NormPattern(projectPath, p string) (string, error) {
 	if p == "" {
 		return "", errors.New("empty path")
 	}
+	if oneLine(p, 1024) != p {
+		return "", errors.New("path contains control characters or line breaks")
+	}
 	dir := strings.HasSuffix(p, "/") || strings.HasSuffix(p, `\`)
 	p = filepath.ToSlash(p)
 	if strings.HasPrefix(p, "/") || (len(p) > 1 && p[1] == ':') {

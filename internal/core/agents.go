@@ -206,7 +206,7 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 	if r.Harness == "" {
 		return Agent{}, errors.New("harness is required")
 	}
-	r.Role, r.Model = oneLine(r.Role, 80), oneLine(r.Model, 80)
+	r = sanitizeReg(r)
 	var out Agent
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		if err := s.reap(tx); err != nil {
