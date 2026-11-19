@@ -319,7 +319,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 			if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: f}, &l); err != nil || l == nil {
 				continue
 			}
-			msg := fmt.Sprintf("interlinked: %s is reserved by %s (%s, expires in %s). Message them with send_message to=%s, or work on something else.",
+			msg := fmt.Sprintf("interlinked: %s is reserved by %s (their stated reason: %q; expires in %s). Message them with send_message to=%s, or work on something else.",
 				f, l.Agent, orNo(l.Reason), time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute), l.Agent)
 			if cfg.Locks.Enforce == "warn" {
 				return Result{Warn: msg}, nil

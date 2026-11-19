@@ -52,10 +52,10 @@ func Agents(list []core.Agent, me string) string {
 			fmt.Fprintf(&b, "@%s", a.Branch)
 		}
 		if a.Role != "" {
-			fmt.Fprintf(&b, " · role: %s", a.Role)
+			fmt.Fprintf(&b, " · role %q", a.Role)
 		}
 		if a.Activity != "" {
-			fmt.Fprintf(&b, " · %s", a.Activity)
+			fmt.Fprintf(&b, " · activity %q", a.Activity)
 		}
 		fmt.Fprintf(&b, " · seen %s · delivery %s", Ago(a.LastSeen), orDash(a.Delivery))
 		if a.Machine != "" {
@@ -255,7 +255,7 @@ func Locks(list []core.Lock) string {
 	for _, l := range list {
 		fmt.Fprintf(&b, "%s — %s", l.Pattern, l.Agent)
 		if l.Reason != "" {
-			fmt.Fprintf(&b, " (%s)", l.Reason)
+			fmt.Fprintf(&b, " (reason %q)", l.Reason)
 		}
 		left := time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute)
 		fmt.Fprintf(&b, " · expires in %s · %s\n", left, l.ProjectPath)

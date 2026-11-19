@@ -133,7 +133,7 @@ func (s *Store) CreateTask(ctx context.Context, r TaskReq) (Task, error) {
 		}
 		now := s.ms()
 		res, err := tx.Exec(`INSERT INTO tasks(board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,created_at,updated_at)
-			VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?)`, board, clip(r.Title, 200), r.Body, prio, assignee.ID, assignee.Name, by.Name, by.ID,
+			VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?)`, board, oneLine(r.Title, 200), r.Body, prio, assignee.ID, assignee.Name, by.Name, by.ID,
 			joinIDs(r.DependsOn), strings.Join(r.Labels, ","), now, now)
 		if err != nil {
 			return err
@@ -280,7 +280,7 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 			t.Status = u.Status
 		}
 		if u.Title != "" {
-			t.Title = clip(u.Title, 200)
+			t.Title = oneLine(u.Title, 200)
 		}
 		if u.Body != nil {
 			t.Body = *u.Body

@@ -210,7 +210,7 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			// Refresh our own identical reservation instead of duplicating it.
 			_, _ = tx.Exec(`DELETE FROM locks WHERE agent_id=? AND project_path=? AND pattern=?`, me.ID, me.ProjectPath, pat)
 			out, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,created_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
-				me.ProjectPath, pat, me.ID, me.Name, clip(r.Reason, 200), now, now+ttl.Milliseconds())
+				me.ProjectPath, pat, me.ID, me.Name, oneLine(r.Reason, 200), now, now+ttl.Milliseconds())
 			if err != nil {
 				return err
 			}

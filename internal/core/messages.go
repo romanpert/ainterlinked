@@ -86,7 +86,7 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.ms()
 		res, err := tx.Exec(`INSERT INTO messages(thread_id,reply_to,sender_id,sender_name,target,subject,body,urgent,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-			parent.ThreadID, r.ReplyTo, sender.ID, sender.Name, display, clip(r.Subject, 200), r.Body, b2i(r.Urgent), now)
+			parent.ThreadID, r.ReplyTo, sender.ID, sender.Name, display, oneLine(r.Subject, 200), r.Body, b2i(r.Urgent), now)
 		if err != nil {
 			return err
 		}

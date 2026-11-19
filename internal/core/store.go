@@ -175,6 +175,23 @@ func newID() string {
 	return idEnc.EncodeToString(b)
 }
 
+// oneLine makes a peer-supplied short field (activity, role, reason, task
+// title, subject, name) a single line without control characters, so it
+// can't impersonate a new section when shown to another model.
+func oneLine(s string, n int) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return clip(strings.Join(strings.Fields(b.String()), " "), n)
+}
+
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len([]rune(s)) <= n {

@@ -206,6 +206,7 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 	if r.Harness == "" {
 		return Agent{}, errors.New("harness is required")
 	}
+	r.Role, r.Model = oneLine(r.Role, 80), oneLine(r.Model, 80)
 	var out Agent
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		if err := s.reap(tx); err != nil {
@@ -279,6 +280,7 @@ type StatusReq struct {
 
 // SetStatus records a heartbeat and optional state/activity changes.
 func (s *Store) SetStatus(ctx context.Context, r StatusReq) (Agent, error) {
+	r.Role, r.Model, r.Activity = oneLine(r.Role, 80), oneLine(r.Model, 80), oneLine(r.Activity, 200)
 	if r.State != "" && !validState(r.State) {
 		return Agent{}, fmt.Errorf("state must be one of %s", strings.Join(States, ", "))
 	}
@@ -313,7 +315,7 @@ func (s *Store) SetStatus(ctx context.Context, r StatusReq) (Agent, error) {
 		}
 		_, err = tx.Exec(`UPDATE agents SET name=?, state=?, activity=CASE WHEN ?<>'' THEN ? ELSE activity END,
 			role=COALESCE(NULLIF(?,''),role), model=COALESCE(NULLIF(?,''),model), online=1, last_seen=? WHERE id=?`,
-			name, state, r.Activity, clip(r.Activity, 200), r.Role, r.Model, now, a.ID)
+			name, state, r.Activity, oneLine(r.Activity, 200), r.Role, r.Model, now, a.ID)
 		if err != nil {
 			return err
 		}
