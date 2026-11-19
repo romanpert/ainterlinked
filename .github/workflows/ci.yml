@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: vet
+        run: go vet ./...
+      - name: unit tests
+        run: go test ./...
+      - name: race detector
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: build
+        shell: bash
+        run: go build -o bin/interlinked$( [ "$RUNNER_OS" = Windows ] && echo .exe ) ./cmd/interlinked
+      - name: end-to-end (real processes, no model calls)
+        run: node scripts/e2e.mjs
+      - name: wheel installs and runs
+        shell: bash
+        run: |
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) t=linux-amd64 ;; Linux-ARM64) t=linux-arm64 ;;
+            macOS-ARM64) t=darwin-arm64 ;; macOS-X64) t=darwin-amd64 ;;
+            Windows-X64) t=windows-amd64 ;;
+          esac
+          python packaging/pypi/build_wheels.py --version 0.0.0.dev0 --only "$t" --dist dist
+          python -m venv /tmp/venv || python -m venv venv
+          VENV=$( [ -d /tmp/venv ] && echo /tmp/venv || echo venv )
+          if [ "$RUNNER_OS" = Windows ]; then PY="$VENV/Scripts/python"; IL="$VENV/Scripts/interlinked"; else PY="$VENV/bin/python"; IL="$VENV/bin/interlinked"; fi
+          "$PY" -m pip install dist/*.whl
+          "$IL" version
+          "$PY" -m interlinked_agents version
+          INTERLINKED_HOME="$RUNNER_TEMP/ilhome" "$IL" doctor || true

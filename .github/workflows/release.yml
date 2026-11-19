@@ -1,0 +1,63 @@
+name: release
+
+# Push a tag like v0.1.0 to build every platform, publish the wheels to PyPI
+# (trusted publishing: configure the "pypi" environment on PyPI first) and
+# attach raw binaries to a GitHub release for the install scripts.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: go test ./...
+      - run: python packaging/pypi/build_wheels.py --version "${GITHUB_REF_NAME#v}" --dist dist
+      - run: pipx run twine check dist/*.whl
+      - name: checksums
+        run: cd dist/bin && sha256sum interlinked-* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: rm -rf dist/bin
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/bin/interlinked-*
+            dist/bin/SHA256SUMS
+          generate_release_notes: true

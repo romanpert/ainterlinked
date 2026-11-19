@@ -1,0 +1,436 @@
+package core
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// Task is an item on a shared board.
+type Task struct {
+	ID          int64    `json:"id"`
+	Board       string   `json:"board"`
+	Title       string   `json:"title"`
+	Body        string   `json:"body,omitempty"`
+	Status      string   `json:"status"`
+	Priority    int      `json:"priority"`
+	AssigneeID  string   `json:"assignee_id,omitempty"`
+	Assignee    string   `json:"assignee,omitempty"`
+	CreatedBy   string   `json:"created_by,omitempty"`
+	CreatedByID string   `json:"created_by_id,omitempty"`
+	DependsOn   []int64  `json:"depends_on,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
+	Result      string   `json:"result,omitempty"`
+	CreatedAt   int64    `json:"created_at"`
+	UpdatedAt   int64    `json:"updated_at"`
+	Blocked     bool     `json:"blocked_by_deps,omitempty"`
+}
+
+// TaskStatuses in board order.
+var TaskStatuses = []string{"todo", "doing", "blocked", "review", "done", "cancelled"}
+
+const taskCols = `id,board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,result,created_at,updated_at`
+
+func scanTask(r scanner) (Task, error) {
+	var t Task
+	var deps, labels string
+	err := r.Scan(&t.ID, &t.Board, &t.Title, &t.Body, &t.Status, &t.Priority, &t.AssigneeID, &t.Assignee,
+		&t.CreatedBy, &t.CreatedByID, &deps, &labels, &t.Result, &t.CreatedAt, &t.UpdatedAt)
+	t.DependsOn = parseIDs(deps)
+	t.Labels = splitList(labels)
+	return t, err
+}
+
+func parseIDs(s string) []int64 {
+	var out []int64
+	for _, p := range splitList(s) {
+		if n, err := strconv.ParseInt(strings.TrimPrefix(p, "#"), 10, 64); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func joinIDs(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func validTaskStatus(st string) bool {
+	for _, v := range TaskStatuses {
+		if v == st {
+			return true
+		}
+	}
+	return false
+}
+
+// TaskReq creates a task.
+type TaskReq struct {
+	By        string   `json:"by"`
+	Board     string   `json:"board,omitempty"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body,omitempty"`
+	Priority  *int     `json:"priority,omitempty"` // 0 urgent … 3 low; default 2
+	DependsOn []int64  `json:"depends_on,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+}
+
+func (s *Store) boardFor(a Agent, board string) string {
+	if b := strings.TrimSpace(board); b != "" {
+		return strings.ToLower(b)
+	}
+	if a.Project != "" {
+		return strings.ToLower(a.Project)
+	}
+	return "default"
+}
+
+// CreateTask adds a task to a board (default: the creator's project).
+func (s *Store) CreateTask(ctx context.Context, r TaskReq) (Task, error) {
+	if strings.TrimSpace(r.Title) == "" {
+		return Task{}, errors.New("title is required")
+	}
+	by, err := s.Get(ctx, r.By)
+	if err != nil {
+		return Task{}, err
+	}
+	prio := 2
+	if r.Priority != nil {
+		prio = clampPrio(*r.Priority)
+	}
+	var assignee Agent
+	if r.Assignee != "" {
+		if assignee, err = s.Resolve(ctx, r.Assignee); err != nil {
+			return Task{}, err
+		}
+	}
+	board := s.boardFor(by, r.Board)
+	var out Task
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		for _, d := range r.DependsOn {
+			var n int
+			if err := tx.QueryRow(`SELECT count(*) FROM tasks WHERE id=?`, d).Scan(&n); err != nil || n == 0 {
+				return fmt.Errorf("depends_on: no task #%d", d)
+			}
+		}
+		now := s.ms()
+		res, err := tx.Exec(`INSERT INTO tasks(board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,created_at,updated_at)
+			VALUES(?,?,?,'todo',?,?,?,?,?,?,?,?,?)`, board, clip(r.Title, 200), r.Body, prio, assignee.ID, assignee.Name, by.Name, by.ID,
+			joinIDs(r.DependsOn), strings.Join(r.Labels, ","), now, now)
+		if err != nil {
+			return err
+		}
+		id, _ := res.LastInsertId()
+		event(tx, now, &by, "task", fmt.Sprintf("%s created #%d on %s: %s", by.Name, id, board, r.Title))
+		out, err = scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
+		return err
+	})
+	return out, err
+}
+
+func clampPrio(p int) int {
+	if p < 0 {
+		return 0
+	}
+	if p > 3 {
+		return 3
+	}
+	return p
+}
+
+// TaskFilter narrows ListTasks.
+type TaskFilter struct {
+	Agent    string `json:"agent,omitempty"` // caller, for Mine and the default board
+	Board    string `json:"board,omitempty"` // "" = caller's project board, "*" = all boards
+	Status   string `json:"status,omitempty"`
+	Assignee string `json:"assignee,omitempty"`
+	Mine     bool   `json:"mine,omitempty"`
+	Open     bool   `json:"open,omitempty"` // exclude done/cancelled
+}
+
+// ListTasks returns tasks ordered by status, priority and age.
+func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
+	q := `SELECT ` + taskCols + ` FROM tasks WHERE 1=1`
+	var args []any
+	var me Agent
+	if f.Agent != "" {
+		me, _ = s.Get(ctx, f.Agent)
+	}
+	board := f.Board
+	if board == "" && me.ID != "" {
+		board = s.boardFor(me, "")
+	}
+	if board != "" && board != "*" {
+		q += ` AND board=?`
+		args = append(args, strings.ToLower(board))
+	}
+	if f.Status != "" {
+		q += ` AND status=?`
+		args = append(args, f.Status)
+	}
+	if f.Open {
+		q += ` AND status NOT IN ('done','cancelled')`
+	}
+	if f.Mine && me.ID != "" {
+		q += ` AND assignee_id=?`
+		args = append(args, me.ID)
+	} else if f.Assignee != "" {
+		q += ` AND lower(assignee)=lower(?)`
+		args = append(args, strings.TrimPrefix(f.Assignee, "@"))
+	}
+	q += ` ORDER BY CASE status WHEN 'doing' THEN 0 WHEN 'blocked' THEN 1 WHEN 'review' THEN 2 WHEN 'todo' THEN 3 ELSE 4 END, priority, id LIMIT 500`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	var out []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	rows.Close()
+	for i := range out {
+		out[i].Blocked = s.depsPending(ctx, nil, out[i].DependsOn)
+	}
+	return out, nil
+}
+
+func (s *Store) depsPending(ctx context.Context, tx *sql.Tx, deps []int64) bool {
+	for _, d := range deps {
+		var st string
+		var err error
+		if tx != nil {
+			err = tx.QueryRow(`SELECT status FROM tasks WHERE id=?`, d).Scan(&st)
+		} else {
+			err = s.db.QueryRowContext(ctx, `SELECT status FROM tasks WHERE id=?`, d).Scan(&st)
+		}
+		if err == nil && st != "done" && st != "cancelled" {
+			return true
+		}
+	}
+	return false
+}
+
+// TaskUpdate changes a task. Nil/empty fields are left unchanged.
+type TaskUpdate struct {
+	ID       int64   `json:"id"`
+	By       string  `json:"by"`
+	Status   string  `json:"status,omitempty"`
+	Title    string  `json:"title,omitempty"`
+	Body     *string `json:"body,omitempty"`
+	Priority *int    `json:"priority,omitempty"`
+	Assignee *string `json:"assignee,omitempty"` // "" unassigns, "me" assigns the caller
+	Result   string  `json:"result,omitempty"`
+}
+
+// UpdateTask applies changes and, when a task is finished by someone other
+// than its creator, tells the creator.
+func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
+	if u.Status != "" && !validTaskStatus(u.Status) {
+		return Task{}, fmt.Errorf("status must be one of %s", strings.Join(TaskStatuses, ", "))
+	}
+	by, err := s.Get(ctx, u.By)
+	if err != nil {
+		return Task{}, err
+	}
+	var assignee *Agent
+	if u.Assignee != nil {
+		a := Agent{}
+		switch strings.TrimSpace(*u.Assignee) {
+		case "":
+		case "me":
+			a = by
+		default:
+			if a, err = s.Resolve(ctx, *u.Assignee); err != nil {
+				return Task{}, err
+			}
+		}
+		assignee = &a
+	}
+	var before, out Task
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, u.ID))
+		if err != nil {
+			return fmt.Errorf("no task #%d", u.ID)
+		}
+		before = t
+		if u.Status != "" {
+			t.Status = u.Status
+		}
+		if u.Title != "" {
+			t.Title = clip(u.Title, 200)
+		}
+		if u.Body != nil {
+			t.Body = *u.Body
+		}
+		if u.Priority != nil {
+			t.Priority = clampPrio(*u.Priority)
+		}
+		if assignee != nil {
+			t.AssigneeID, t.Assignee = assignee.ID, assignee.Name
+		}
+		if u.Result != "" {
+			t.Result = u.Result
+		}
+		if t.Status == "doing" && t.AssigneeID == "" {
+			t.AssigneeID, t.Assignee = by.ID, by.Name
+		}
+		now := s.ms()
+		_, err = tx.Exec(`UPDATE tasks SET status=?, title=?, body=?, priority=?, assignee_id=?, assignee=?, result=?, updated_at=? WHERE id=?`,
+			t.Status, t.Title, t.Body, t.Priority, t.AssigneeID, t.Assignee, t.Result, now, t.ID)
+		if err != nil {
+			return err
+		}
+		msg := fmt.Sprintf("%s updated #%d", by.Name, t.ID)
+		if t.Status != before.Status {
+			msg = fmt.Sprintf("%s moved #%d %s → %s", by.Name, t.ID, before.Status, t.Status)
+		}
+		event(tx, now, &by, "task", msg+": "+t.Title)
+		out, err = scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, t.ID))
+		return err
+	})
+	if err != nil {
+		return out, err
+	}
+	// Tell the creator — by id, since default names get reused by later sessions.
+	if (out.Status == "done" || out.Status == "blocked") && before.Status != out.Status && out.CreatedByID != "" && out.CreatedByID != by.ID {
+		if creator, err := s.Get(ctx, out.CreatedByID); err == nil {
+			body := fmt.Sprintf("Task #%d %q is now %s.", out.ID, out.Title, out.Status)
+			if out.Result != "" {
+				body += "\nResult: " + out.Result
+			}
+			_, _ = s.Send(ctx, SendReq{From: by.ID, To: creator.ID, Subject: fmt.Sprintf("task #%d %s", out.ID, out.Status), Body: body})
+		}
+	}
+	return out, nil
+}
+
+// Claim atomically assigns a todo task to an agent. It fails if someone else
+// holds it or its dependencies aren't finished.
+func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error) {
+	me, err := s.Get(ctx, agent)
+	if err != nil {
+		return Task{}, err
+	}
+	var out Task
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
+		if err != nil {
+			return fmt.Errorf("no task #%d", id)
+		}
+		mine := t.AssigneeID == me.ID
+		switch {
+		case t.Status == "doing" && mine: // re-claiming your own task is a no-op
+		case t.Status != "todo" && t.Assignee != "":
+			return fmt.Errorf("task #%d is %s (%s)", id, t.Status, t.Assignee)
+		case t.Status != "todo":
+			return fmt.Errorf("task #%d is %s, not todo", id, t.Status)
+		case t.AssigneeID != "" && !mine:
+			return fmt.Errorf("task #%d is assigned to %s", id, t.Assignee)
+		}
+		if s.depsPending(ctx, tx, t.DependsOn) {
+			return fmt.Errorf("task #%d waits on unfinished dependencies %v", id, t.DependsOn)
+		}
+		now := s.ms()
+		res, err := tx.Exec(`UPDATE tasks SET status='doing', assignee_id=?, assignee=?, updated_at=? WHERE id=? AND status IN ('todo','doing')`,
+			me.ID, me.Name, now, id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("task #%d was taken concurrently", id)
+		}
+		_, _ = tx.Exec(`UPDATE agents SET state='working', activity=?, last_seen=? WHERE id=?`, clip(fmt.Sprintf("#%d %s", id, t.Title), 200), now, me.ID)
+		event(tx, now, &me, "task", fmt.Sprintf("%s claimed #%d: %s", me.Name, id, t.Title))
+		out, err = scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
+		return err
+	})
+	return out, err
+}
+
+// ClaimNext claims the most urgent ready task on a board (or returns
+// ok=false when there's nothing to do).
+func (s *Store) ClaimNext(ctx context.Context, agent, board, label string) (Task, bool, error) {
+	tasks, err := s.ListTasks(ctx, TaskFilter{Agent: agent, Board: board, Status: "todo"})
+	if err != nil {
+		return Task{}, false, err
+	}
+	for _, t := range tasks {
+		if t.Blocked || (t.AssigneeID != "" && t.AssigneeID != agent) {
+			continue
+		}
+		if label != "" && !contains(t.Labels, label) {
+			continue
+		}
+		got, err := s.Claim(ctx, agent, t.ID)
+		if err == nil {
+			return got, true, nil
+		}
+	}
+	return Task{}, false, nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if strings.EqualFold(x, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// Board summarises one board.
+type Board struct {
+	Name   string         `json:"name"`
+	Counts map[string]int `json:"counts"`
+	Total  int            `json:"total"`
+}
+
+// Boards lists boards with task counts per status.
+func (s *Store) Boards(ctx context.Context) ([]Board, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT board,status,count(*) FROM tasks GROUP BY board,status ORDER BY board`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	idx := map[string]int{}
+	var out []Board
+	for rows.Next() {
+		var b, st string
+		var n int
+		if err := rows.Scan(&b, &st, &n); err != nil {
+			return nil, err
+		}
+		i, ok := idx[b]
+		if !ok {
+			i = len(out)
+			idx[b] = i
+			out = append(out, Board{Name: b, Counts: map[string]int{}})
+		}
+		out[i].Counts[st] = n
+		out[i].Total += n
+	}
+	return out, rows.Err()
+}
