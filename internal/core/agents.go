@@ -207,6 +207,10 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 		return Agent{}, errors.New("harness is required")
 	}
 	r = sanitizeReg(r)
+	if len(r.ProjectPath) > 4096 {
+		// Rejected, not clipped: a clipped path would no longer match the real one.
+		return Agent{}, errors.New("project path too long")
+	}
 	var out Agent
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		if err := s.reap(tx); err != nil {

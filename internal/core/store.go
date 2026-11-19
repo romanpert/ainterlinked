@@ -221,7 +221,7 @@ func sanitizeReg(r RegisterReq) RegisterReq {
 	r.Project = oneLine(r.Project, 120)
 	r.ProjectPath = stripControl(r.ProjectPath) // paths keep their exact spacing
 	r.Branch = oneLine(r.Branch, 120)
-	r.SessionID = stripControl(r.SessionID)
+	r.SessionID = clip(stripControl(r.SessionID), 200)
 	r.Via = oneLine(r.Via, 20)
 	r.Delivery = oneLine(r.Delivery, 20)
 	return r
