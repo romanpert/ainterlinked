@@ -153,6 +153,7 @@ func mcpArgs(harness string) []string { return []string{"mcp", "--harness", harn
 type hookSpec struct {
 	Event   string
 	Matcher string
+	Timeout int // seconds; 0 = the harness-wide default
 }
 
 // setClaudeStyleHooks replaces our entries under root.hooks (root = "" for
@@ -166,6 +167,9 @@ func setClaudeStyleHooks(src []byte, e *Env, harness string, specs []hookSpec, t
 		h := map[string]any{"type": "command", "command": e.hookCmd(harness, s.Event, powershell)}
 		if timeout != nil {
 			h["timeout"] = timeout
+		}
+		if s.Timeout > 0 {
+			h["timeout"] = s.Timeout
 		}
 		group := map[string]any{"hooks": []any{h}}
 		if s.Matcher != "" {
@@ -284,7 +288,7 @@ func jsonServerRemove(t *Tx, file string, key []string) {
 
 // ToolNames lists the MCP tools (for harnesses that want an allow-list).
 var ToolNames = []string{
-	"whoami", "list_agents", "set_status", "send_message", "read_inbox", "wait_for_messages", "get_thread",
+	"whoami", "list_agents", "set_status", "set_delivery", "send_message", "read_inbox", "wait_for_messages", "get_thread",
 	"create_task", "list_tasks", "list_boards", "claim_task", "update_task",
 	"reserve_files", "release_files", "list_reservations", "activity_feed",
 }

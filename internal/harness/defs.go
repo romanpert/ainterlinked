@@ -101,7 +101,7 @@ var codexHooks = []hookSpec{
 	{Event: "PreToolUse", Matcher: "apply_patch|Edit|Write"},
 	{Event: "PostToolUse"},
 	{Event: "Stop"},
-	{Event: "SessionEnd"},
+	{Event: "SessionEnd", Timeout: 3}, // Codex clamps SessionEnd to 3 s
 }
 
 func codexHome(e *Env) string { return e.path(".codex") }
@@ -110,7 +110,10 @@ func codex() *Harness {
 	cfg := func(e *Env) string { return filepath.Join(codexHome(e), "config.toml") }
 	hooks := func(e *Env) string { return filepath.Join(codexHome(e), "hooks.json") }
 	block := func(e *Env) string {
-		return fmt.Sprintf("command = %s\nargs = [\"mcp\", \"--harness\", \"codex\"]\nstartup_timeout_sec = 20\ntool_timeout_sec = 660\n", tomlString(e.Bin))
+		// default_tools_approval_mode: without it Codex asks before every
+		// bus call (and `codex exec` refuses them). The tools only message,
+		// plan and reserve files, the same trust mcp__interlinked gets in Claude.
+		return fmt.Sprintf("command = %s\nargs = [\"mcp\", \"--harness\", \"codex\"]\nstartup_timeout_sec = 20\ntool_timeout_sec = 660\ndefault_tools_approval_mode = \"approve\"\n", tomlString(e.Bin))
 	}
 	return &Harness{
 		ID: "codex", Name: "OpenAI Codex", Tier: "turn", Hooks: true,

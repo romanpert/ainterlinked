@@ -114,6 +114,17 @@ func TestInstallIdempotentAndUninstallRestores(t *testing.T) {
 	if !strings.Contains(toml, "[mcp_servers.interlinked]\r\ncommand = 'C:\\Tools\\interlinked.exe'") || !strings.Contains(toml, "[mcp_servers.gitnexus]") {
 		t.Errorf("codex toml:\n%s", toml)
 	}
+	// Codex asks before every MCP tool call unless the server is
+	// pre-approved (codex exec with approval "never" refuses outright): the
+	// bus tools only message, plan and reserve, like mcp__interlinked in Claude.
+	if !strings.Contains(toml, "default_tools_approval_mode = \"approve\"") {
+		t.Errorf("codex tools not pre-approved:\n%s", toml)
+	}
+	// Codex clamps SessionEnd hooks to 3 s and warns on every start otherwise.
+	codexHooksFile := string(read(e.path(".codex", "hooks.json")))
+	if i := strings.Index(codexHooksFile, "hook codex SessionEnd"); i < 0 || !strings.Contains(codexHooksFile[i:], `"timeout": 3`) {
+		t.Errorf("codex SessionEnd timeout:\n%s", codexHooksFile)
+	}
 	zedSrc := read(e.appData("Zed", "settings.json"))
 	if !bytes.Contains(zedSrc, []byte("// mine")) || !bytes.Contains(zedSrc, []byte(`"interlinked"`)) {
 		t.Errorf("zed comments must survive:\n%s", zedSrc)
