@@ -39,7 +39,7 @@ const ok = (cond, what, extra = "") => {
 const prompt = [
   "You are testing a message bus between AI agents. Do exactly this and nothing else:",
   "1. Call the interlinked tool whoami.",
-  "2. Call the interlinked tool wait_for_messages with timeout_seconds 120.",
+  "2. If a peer message has already been shown to you, skip this step; otherwise call the interlinked tool wait_for_messages with timeout_seconds 120.",
   "3. When a message arrives, call the interlinked tool send_message with reply_to set to that message's id and a body that contains the code word the message asks for.",
   "If you are later shown more messages, answer each the same way.",
   "Do not run shell commands and do not edit files.",
@@ -73,7 +73,9 @@ try {
     il("send", name, `Reply with the code word ${w1}.`);
     const t0 = Date.now();
     const got1 = await waitFor(() => il("inbox", "--all", "--peek").includes(w1), 1000);
-    ok(Boolean(got1), "codex received the message and replied (MCP)", `${Math.round((Date.now() - t0) / 1000)} s`);
+    // Delivery itself takes ~1 s (hook injection or wait_for_messages); this
+    // measures send → reply, which includes the model's own turn.
+    ok(Boolean(got1), "codex received the message and replied", `${Math.round((Date.now() - t0) / 1000)} s send→reply`);
     const after = il("agents", "--all").split("\n").find((l) => l.includes(name + " "));
     const hooksRan = Boolean(after && /delivery turn/.test(after));
     if (!hooksRan) {
