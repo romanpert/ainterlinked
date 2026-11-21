@@ -64,23 +64,29 @@ func commandProgram(cmd string) string {
 		// segments are text, not commands: stop rather than guess.
 		multiline := false
 		for _, w := range seg {
-			multiline = multiline || strings.ContainsAny(w, "\r\n")
+			multiline = multiline || strings.ContainsAny(w.text, "\r\n")
 		}
-		for len(seg) > 0 && envAssign.MatchString(seg[0]) {
+		for len(seg) > 0 && envAssign.MatchString(seg[0].text) {
 			seg = seg[1:]
 		}
-		if len(seg) == 0 || strings.HasPrefix(seg[0], "$") || dirCommands[strings.ToLower(baseProgram(seg[0]))] {
+		if len(seg) == 0 || strings.HasPrefix(seg[0].text, "$") || dirCommands[strings.ToLower(baseProgram(seg[0].text))] {
 			if multiline {
 				return ""
 			}
 			continue // an assignment ($x = …, $env:X = …, X=1) or a directory change
 		}
-		prog := baseProgram(seg[0])
+		first := seg[0]
+		// A quoted program is only believable as a path to an executable
+		// ("C:/Program Files/…/node.exe"); a bare quoted word is just text.
+		if first.quoted && !strings.ContainsAny(first.text, `/\`) {
+			return ""
+		}
+		prog := baseProgram(first.text)
 		if !programName.MatchString(prog) {
 			return ""
 		}
-		if subcommandTools[prog] && len(seg) > 1 && knownVerbs[seg[1]] {
-			prog += " " + seg[1]
+		if subcommandTools[prog] && len(seg) > 1 && !seg[1].quoted && knownVerbs[seg[1].text] {
+			prog += " " + seg[1].text
 		}
 		return prog
 	}
@@ -94,31 +100,49 @@ func baseProgram(tok string) string {
 	return exeSuffix.ReplaceAllString(tok, "")
 }
 
+// shellWord is one word of a command; quoted marks that some of it was
+// inside quotes.
+type shellWord struct {
+	text   string
+	quoted bool
+}
+
 // shellSegments splits a command line into simple commands at unquoted ;, &,
 // |, ( ) and line breaks, and each into words. Line continuations (\ or `
 // before a newline) join lines; a backslash escapes a following space, quote
-// or separator; < and > end a word; # starts a comment.
-func shellSegments(cmd string) [][]string {
+// or separator; # starts a comment. Redirections (<, >, 2>&1, <<EOF) are
+// dropped together with their target, which is a file name, not a program.
+func shellSegments(cmd string) [][]shellWord {
 	var (
-		segs  [][]string
-		words []string
-		word  strings.Builder
-		quote rune
-		inTok bool
+		segs     [][]shellWord
+		words    []shellWord
+		word     strings.Builder
+		quote    rune
+		inTok    bool
+		quoted   bool
+		skipNext bool // the next word is a redirection target
 	)
 	endWord := func() {
 		if inTok {
-			words = append(words, word.String())
+			if skipNext {
+				skipNext = false
+			} else {
+				words = append(words, shellWord{text: word.String(), quoted: quoted})
+			}
 			word.Reset()
-			inTok = false
+			inTok, quoted = false, false
 		}
 	}
 	endSeg := func() {
 		endWord()
+		skipNext = false
 		if len(words) > 0 {
 			segs = append(segs, words)
 			words = nil
 		}
+	}
+	isDigits := func(s string) bool {
+		return s != "" && strings.Trim(s, "0123456789") == ""
 	}
 	rs := []rune(cmd)
 	for i := 0; i < len(rs); i++ {
@@ -143,18 +167,28 @@ func shellSegments(cmd string) [][]string {
 			if next == '\r' && i+1 < len(rs) && rs[i+1] == '\n' {
 				i++
 			}
-		case r == '\\' && strings.ContainsRune(" \t'\";&|()<>#\\", next) && next != 0:
+		case r == '\\' && next != 0 && strings.ContainsRune(" \t'\";&|()<>#\\", next):
 			word.WriteRune(next)
 			inTok = true
 			i++
 		case r == '"' || r == '\'':
-			quote, inTok = r, true
+			quote, inTok, quoted = r, true, true
 		case r == '#' && !inTok:
 			for i+1 < len(rs) && rs[i+1] != '\n' {
 				i++
 			}
 		case r == '<' || r == '>':
+			// "2>" / "1>&2": a bare number glued to the operator is a file
+			// descriptor, not an argument.
+			if inTok && !quoted && isDigits(word.String()) {
+				word.Reset()
+				inTok = false
+			}
 			endWord()
+			for i+1 < len(rs) && (rs[i+1] == '<' || rs[i+1] == '>' || rs[i+1] == '&') {
+				i++ // >>, <<, >&, <&
+			}
+			skipNext = true
 		case r == ';' || r == '&' || r == '|' || r == '\n' || r == '(' || r == ')':
 			endSeg()
 		case r == ' ' || r == '\t' || r == '\r':

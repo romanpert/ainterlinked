@@ -44,6 +44,13 @@ func TestActivityFromToolNamesOnlyTheProgram(t *testing.T) {
 		{`sudo -u prise-admin systemctl restart x`, "Bash: sudo"},
 		// PowerShell
 		{`$env:TOKEN='sk-1abcdefgh'; & 'C:\path\tool.exe' --key prise`, "Bash: tool"},
+		// redirect targets and quoted words are never the program
+		{`> prise-secret.log echo hi`, "Bash: echo"},
+		{`2>prise.err <prise.in sort`, "Bash: sort"},
+		{`'hunter2' --flag`, "Bash"},
+		{`"prise-host"`, "Bash"},
+		{`"C:/Program Files/nodejs/node.exe" x.js`, "Bash: node"},
+		{`'/opt/prise tools/run.sh' --go`, "Bash: run"},
 	}
 	for _, c := range cases {
 		got := activityFromTool(Input{ToolName: "Bash", ToolInput: map[string]any{"command": c.cmd}}, "")
