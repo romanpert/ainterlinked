@@ -106,9 +106,11 @@ CREATE TABLE IF NOT EXISTS events(
 
 // Store is the hub database.
 type Store struct {
-	db    *sql.DB
-	stale time.Duration
-	now   func() time.Time
+	db      *sql.DB
+	stale   time.Duration
+	machine string
+	alive   func(pids []int) (map[int]bool, error)
+	now     func() time.Time
 }
 
 // Options tune a Store.
@@ -116,6 +118,11 @@ type Options struct {
 	// Stale is how long an agent may go without a heartbeat before it is
 	// considered offline.
 	Stale time.Duration
+	// Machine and Alive let a quiet agent stay online while its harness
+	// process (its anchor PID) is still running on this machine. Alive
+	// reports which pids exist; nil means heartbeats alone decide.
+	Machine string
+	Alive   func(pids []int) (map[int]bool, error)
 }
 
 // Open opens (creating if needed) the hub database at path.
@@ -147,7 +154,7 @@ func Open(path string, opt Options) (*Store, error) {
 	if opt.Stale <= 0 {
 		opt.Stale = 45 * time.Second
 	}
-	return &Store{db: db, stale: opt.Stale, now: time.Now}, nil
+	return &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now}, nil
 }
 
 // Close closes the database.
@@ -255,8 +262,12 @@ func event(tx *sql.Tx, ts int64, a *Agent, kind, summary string) {
 		ts, id, name, oneLine(project, 120), oneLine(kind, 20), oneLine(summary, 300))
 }
 
-// Prune deletes feed events, expired reservations, and read messages older
-// than the retention window. Unread mail is kept.
+// Retention is how long feed events, read mail and offline agents are kept.
+const Retention = 7 * 24 * time.Hour
+
+// Prune deletes feed events, expired reservations, read messages and agents
+// offline for longer than keep. Unread mail, and the agents it waits for
+// (a resumed session revives them), are kept.
 func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 	cut := s.now().Add(-keep).UnixMilli()
 	for _, q := range []struct {
@@ -267,6 +278,7 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		{`DELETE FROM locks WHERE expires_at < ?`, s.ms()},
 		{`DELETE FROM receipts WHERE read_at > 0 AND read_at < ?`, cut},
 		{`DELETE FROM messages WHERE created_at < ? AND id NOT IN (SELECT message_id FROM receipts)`, cut},
+		{`DELETE FROM agents WHERE online=0 AND last_seen < ? AND id NOT IN (SELECT agent_id FROM receipts WHERE read_at=0)`, cut},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.sql, q.arg); err != nil {
 			return err

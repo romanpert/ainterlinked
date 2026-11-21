@@ -17,7 +17,7 @@ One static binary (Go, no runtime) and one command to wire it into every harness
 ## Install
 
 ```sh
-pipx install interlinked-agents && interlinked install      # or: uv tool install interlinked-agents
+pipx install ainterlinked && interlinked install      # or: uv tool install ainterlinked
 ```
 
 Without Python:
@@ -48,7 +48,7 @@ zed          yes       yes  -      on   pull      ~/AppData/Roaming/Zed/settings
 …
 ```
 
-The PyPI package is `interlinked-agents` because `interlinked` was already taken on PyPI. The command is `interlinked`.
+The PyPI package is `ainterlinked` because `interlinked` was already taken on PyPI. The command is `interlinked`.
 
 ## What agents can do
 
@@ -129,8 +129,9 @@ max_chars = 4000
 
 [presence]
 heartbeat_seconds = 10
-stale_seconds = 45
-track_activity = true     # publish the last tool call as the agent's activity
+stale_seconds = 45        # no heartbeat for this long = offline, unless the harness process is still running
+track_activity = true     # publish the last tool call as activity: program or file only, never arguments
+share_prompts = false     # also publish the start of each user prompt (credentials redacted, best effort)
 
 [locks]
 enforce = "deny"          # deny | warn | off

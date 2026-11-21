@@ -161,10 +161,12 @@ func overlap(a, b string) bool {
 func (s *Store) liveLocks(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, projectPath string) ([]Lock, error) {
+	// "online" is decided by reap (heartbeat or live harness process); callers
+	// reap first so a dead agent's reservations don't count.
 	rows, err := q.QueryContext(ctx, `SELECT l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.created_at,l.expires_at
 		FROM locks l JOIN agents a ON a.id=l.agent_id
-		WHERE l.project_path=? AND l.expires_at>? AND a.online=1 AND a.last_seen>?`,
-		projectPath, s.ms(), s.ms()-s.stale.Milliseconds())
+		WHERE l.project_path=? AND l.expires_at>? AND a.online=1`,
+		projectPath, s.ms())
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +200,9 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 	}
 	var res LockResult
 	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if err := s.reap(tx); err != nil {
+			return err
+		}
 		live, err := s.liveLocks(ctx, tx, me.ProjectPath)
 		if err != nil {
 			return err
@@ -278,6 +283,9 @@ func (s *Store) Release(ctx context.Context, agent string, paths []string) (int,
 
 // Locks lists live reservations in a project ("" = every project).
 func (s *Store) Locks(ctx context.Context, projectPath string) ([]Lock, error) {
+	if err := s.tx(ctx, s.reap); err != nil {
+		return nil, err
+	}
 	if projectPath != "" {
 		return s.liveLocks(ctx, s.db, projectPath)
 	}
@@ -315,6 +323,9 @@ func (s *Store) CheckFile(ctx context.Context, agent, file string) (*Lock, error
 	case err != nil:
 		// A path we can't evaluate must not slip past a reservation: fail closed.
 		return &Lock{Pattern: file, Agent: "interlinked", Reason: "refused: " + err.Error()}, nil
+	}
+	if err := s.tx(ctx, s.reap); err != nil {
+		return nil, err
 	}
 	live, err := s.liveLocks(ctx, s.db, me.ProjectPath)
 	if err != nil {

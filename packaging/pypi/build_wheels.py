@@ -19,8 +19,8 @@ import subprocess
 import sys
 import zipfile
 
-DIST_NAME = "interlinked-agents"  # PyPI name ("interlinked" is taken by another project)
-PKG = "interlinked_agents"  # import package (python -m interlinked_agents)
+DIST_NAME = "ainterlinked"  # PyPI name ("interlinked" is taken by another project)
+PKG = "ainterlinked"  # import package (python -m ainterlinked)
 GO_MAIN = "./cmd/interlinked"
 LDFLAG_VERSION = "github.com/romanpert/interlinked/internal/cli.Version"
 SUMMARY = "Real-time bus for AI coding agents across harnesses: Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode and more"

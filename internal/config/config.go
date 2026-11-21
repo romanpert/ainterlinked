@@ -42,7 +42,11 @@ type Delivery struct {
 type Presence struct {
 	HeartbeatSeconds int  `toml:"heartbeat_seconds"`
 	StaleSeconds     int  `toml:"stale_seconds"`
-	TrackActivity    bool `toml:"track_activity"` // publish the last tool call as the agent's activity
+	TrackActivity    bool `toml:"track_activity"` // publish the last tool call (program or file, never arguments) as the agent's activity
+	// SharePrompts publishes the start of each user prompt (credential-looking
+	// text redacted) as the agent's activity. Off by default: prompts are the
+	// user's words and redaction can't catch every secret.
+	SharePrompts bool `toml:"share_prompts"`
 }
 
 // Locks controls file reservations.

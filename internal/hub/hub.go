@@ -17,6 +17,7 @@ import (
 
 	"github.com/romanpert/interlinked/internal/config"
 	"github.com/romanpert/interlinked/internal/core"
+	"github.com/romanpert/interlinked/internal/proc"
 )
 
 // Client calls a hub method.
@@ -253,7 +254,11 @@ func Open(cfg config.Config) (Client, error) {
 		// Long enough for wait() long-polls; per-call contexts bound it.
 		return &Remote{Base: cfg.Hub, Token: cfg.Token, HTTP: &http.Client{Timeout: 35 * time.Minute}}, nil
 	}
-	st, err := core.Open(config.DBPath(), core.Options{Stale: time.Duration(cfg.Presence.StaleSeconds) * time.Second})
+	st, err := core.Open(config.DBPath(), core.Options{
+		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
+		Machine: cfg.Machine,
+		Alive:   proc.AliveSet,
+	})
 	if err != nil {
 		return nil, err
 	}

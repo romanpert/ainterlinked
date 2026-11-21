@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/romanpert/interlinked/internal/config"
+	"github.com/romanpert/interlinked/internal/core"
 	"github.com/romanpert/interlinked/internal/harness"
 	"github.com/romanpert/interlinked/internal/hooks"
 	"github.com/romanpert/interlinked/internal/hub"
@@ -150,6 +152,14 @@ func cmdMCP(args []string) int {
 		return 1
 	}
 	defer client.Close()
+	if local, ok := client.(*hub.Local); ok {
+		// Housekeeping without a daemon: each new session tidies the hub once.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = local.Store.Prune(ctx, core.Retention)
+		}()
+	}
 	srv := mcp.New(cfg, client, *h)
 	if err := srv.Serve(context.Background(), os.Stdin, os.Stdout); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(os.Stderr, "interlinked:", err)

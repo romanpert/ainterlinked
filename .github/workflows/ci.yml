@@ -52,5 +52,5 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then PY="$VENV/Scripts/python"; IL="$VENV/Scripts/interlinked"; else PY="$VENV/bin/python"; IL="$VENV/bin/interlinked"; fi
           "$PY" -m pip install dist/*.whl
           "$IL" version
-          "$PY" -m interlinked_agents version
+          "$PY" -m ainterlinked version
           INTERLINKED_HOME="$RUNNER_TEMP/ilhome" "$IL" doctor || true

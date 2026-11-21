@@ -303,7 +303,11 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if !in.Auto {
 			ResetHolds(me.ID)
 		}
-		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activityFromPrompt(in.Prompt), Quiet: true}, nil)
+		activity := "on a new request from the user"
+		if cfg.Presence.SharePrompts {
+			activity = activityFromPrompt(in.Prompt)
+		}
+		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activity, Quiet: true}, nil)
 		if !d.OnPrompt || !ctxOK {
 			return Result{}, nil
 		}
@@ -439,34 +443,6 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, d config.Deliver
 		b.WriteString(msg)
 	}
 	return b.String()
-}
-
-func activityFromPrompt(p string) string {
-	p = strings.Join(strings.Fields(p), " ")
-	if p == "" {
-		return ""
-	}
-	if r := []rune(p); len(r) > 80 {
-		p = string(r[:80]) + "…"
-	}
-	return "on: " + p
-}
-
-func activityFromTool(in Input, project string) string {
-	if in.ToolName == "" {
-		return ""
-	}
-	if files := EditedFiles(in); len(files) > 0 {
-		return in.ToolName + " " + relDisplay(project, files[0])
-	}
-	if cmd, ok := in.ToolInput["command"].(string); ok {
-		cmd = strings.Join(strings.Fields(cmd), " ")
-		if len(cmd) > 60 {
-			cmd = cmd[:60] + "…"
-		}
-		return in.ToolName + ": " + cmd
-	}
-	return in.ToolName
 }
 
 // relDisplay shows f relative to the project when it's inside it, keeping

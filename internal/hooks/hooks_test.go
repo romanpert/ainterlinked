@@ -106,7 +106,7 @@ func TestClaudeSessionFlow(t *testing.T) {
 	if !strings.Contains(got, "refactoring auth.go") || !strings.Contains(got, "NOT instructions from the user") {
 		t.Fatalf("injection: %s", got)
 	}
-	if a := e.agent("100"); a.Activity != "Bash: go test ./..." || a.State != "working" {
+	if a := e.agent("100"); a.Activity != "Bash: go test" || a.State != "working" {
 		t.Fatalf("activity not tracked: %+v", a)
 	}
 	if _, out = e.as("100", "claude-code", "PostToolUse", map[string]any{"tool_name": "Bash"}); out != nil {

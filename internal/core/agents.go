@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Agent is one live harness session on the bus.
@@ -68,22 +69,27 @@ func scanAgent(r scanner) (Agent, error) {
 	return a, err
 }
 
+// anchorGrace caps how long a live harness process alone keeps a silent
+// agent online: after a crash its pid can be reused by an unrelated process.
+const anchorGrace = 12 * time.Hour
+
 func (s *Store) reap(tx *sql.Tx) error {
 	cut := s.ms() - s.stale.Milliseconds()
 	rows, err := tx.Query(`SELECT `+agentCols+` FROM agents WHERE online=1 AND last_seen < ?`, cut)
 	if err != nil {
 		return err
 	}
-	var gone []Agent
+	var stale []Agent
 	for rows.Next() {
 		a, err := scanAgent(rows)
 		if err != nil {
 			rows.Close()
 			return err
 		}
-		gone = append(gone, a)
+		stale = append(stale, a)
 	}
 	rows.Close()
+	gone := s.withoutLiveAnchors(stale)
 	for i := range gone {
 		if _, err := tx.Exec(`UPDATE agents SET online=0, state='offline' WHERE id=?`, gone[i].ID); err != nil {
 			return err
@@ -91,6 +97,40 @@ func (s *Store) reap(tx *sql.Tx) error {
 		event(tx, s.ms(), &gone[i], "left", gone[i].Name+" went offline (no heartbeat)")
 	}
 	return nil
+}
+
+// withoutLiveAnchors drops agents whose harness process still runs on this
+// machine. A session wired only through hooks sends nothing between tool
+// calls; a long command or a long think must not take it offline (which
+// would also free its name for another session and void its reservations).
+func (s *Store) withoutLiveAnchors(stale []Agent) []Agent {
+	if s.alive == nil || s.machine == "" || len(stale) == 0 {
+		return stale
+	}
+	now := s.ms()
+	anchored := func(a Agent) bool {
+		return a.Machine == s.machine && a.AnchorPID > 0 && now-a.LastSeen < anchorGrace.Milliseconds()
+	}
+	var pids []int
+	for _, a := range stale {
+		if anchored(a) {
+			pids = append(pids, a.AnchorPID)
+		}
+	}
+	if len(pids) == 0 {
+		return stale
+	}
+	alive, err := s.alive(pids)
+	if err != nil {
+		return stale // can't tell: heartbeats decide
+	}
+	out := make([]Agent, 0, len(stale))
+	for _, a := range stale {
+		if !(anchored(a) && alive[a.AnchorPID]) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func ukey(r RegisterReq) string {
@@ -262,7 +302,9 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 				return err
 			}
 			if revived {
-				event(tx, now, &a, "joined", name+" is back online")
+				back := a
+				back.Name = name
+				event(tx, now, &back, "joined", name+" is back online")
 			}
 		}
 		out, err = scanAgent(tx.QueryRow(`SELECT `+agentCols+` FROM agents WHERE id=?`, a.ID))

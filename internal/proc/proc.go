@@ -51,6 +51,11 @@ func Anchor() (int, string) {
 		}
 		return pid, "override"
 	}
+	// Hooks run on every tool call: ask about the few processes on the way
+	// up instead of listing the whole table, unless one can't be read.
+	if pid, name, ok := anchorWalk(os.Getpid()); ok {
+		return pid, name
+	}
 	table, err := snapshot()
 	if err != nil {
 		return 0, ""
@@ -58,14 +63,36 @@ func Anchor() (int, string) {
 	return anchorFrom(table, os.Getpid())
 }
 
+// anchorWalk is Anchor using per-process lookups. ok is false when a
+// process on the way couldn't be read and the result would be a guess.
+func anchorWalk(self int) (pid int, name string, ok bool) {
+	failed := false
+	get := func(p int) (Info, bool) {
+		info, found := lookup(p)
+		if !found {
+			failed = true
+		}
+		return info, found
+	}
+	pid, name = anchorWith(get, self)
+	return pid, name, !failed && pid > 0
+}
+
 func anchorFrom(table map[int]Info, self int) (int, string) {
-	cur, ok := table[self]
+	return anchorWith(func(p int) (Info, bool) { i, ok := table[p]; return i, ok }, self)
+}
+
+func anchorWith(get func(int) (Info, bool), self int) (int, string) {
+	cur, ok := get(self)
 	if !ok {
 		return 0, ""
 	}
 	seen := map[int]bool{self: true}
 	for i := 0; i < 32; i++ {
-		parent, ok := table[cur.PPID]
+		if cur.PPID == 0 || seen[cur.PPID] {
+			return cur.PPID, ""
+		}
+		parent, ok := get(cur.PPID)
 		if !ok || seen[parent.PID] || parent.PID == 0 {
 			// Parent unknown (exited or not visible): fall back to the raw PPID.
 			return cur.PPID, ""
@@ -79,15 +106,34 @@ func anchorFrom(table map[int]Info, self int) (int, string) {
 	return cur.PPID, ""
 }
 
+// AliveSet reports which of pids are running, probing each one directly
+// (microseconds each; a full snapshot costs ~100 ms on a busy machine).
+// An error means liveness couldn't be determined.
+func AliveSet(pids []int) (map[int]bool, error) {
+	out := make(map[int]bool, len(pids))
+	for _, p := range pids {
+		if p <= 0 {
+			continue
+		}
+		ok, err := aliveOne(p)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[p] = true
+		}
+	}
+	return out, nil
+}
+
 // Alive reports whether a process with this PID exists.
 func Alive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	table, err := snapshot()
+	ok, err := aliveOne(pid)
 	if err != nil {
 		return true // unknown: assume alive, heartbeats decide
 	}
-	_, ok := table[pid]
 	return ok
 }

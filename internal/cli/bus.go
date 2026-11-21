@@ -383,7 +383,7 @@ func cmdServe(ctx context.Context, args []string) error {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
-			_ = local.Store.Prune(ctx, 7*24*time.Hour)
+			_ = local.Store.Prune(ctx, core.Retention)
 			select {
 			case <-ctx.Done():
 				return
