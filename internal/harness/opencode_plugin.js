@@ -12,6 +12,7 @@ export const AInterlinked = async ({ client, directory }) => {
   const run = async (event, payload) => {
     try {
       const p = Bun.spawn([BIN, "hook", "opencode", event], {
+        windowsHide: true, // no console window when OpenCode has none of its own
         stdin: "pipe", stdout: "pipe", stderr: "ignore", env: process.env,
       });
       p.stdin.write(JSON.stringify({ cwd: directory, ...payload }));

@@ -34,7 +34,7 @@ writeFileSync(settings, JSON.stringify({
 }));
 
 // Peer agent.
-const peer = spawn(BIN, ["mcp", "--harness", "codex"], { env, cwd: PROJECT, stdio: ["pipe", "pipe", "inherit"] });
+const peer = spawn(BIN, ["mcp", "--harness", "codex"], { windowsHide: true, env, cwd: PROJECT, stdio: ["pipe", "pipe", "inherit"] });
 let id = 0;
 const waiting = new Map();
 createInterface({ input: peer.stdout }).on("line", (l) => {
@@ -83,7 +83,7 @@ const asker = setInterval(async () => {
 
 const t0 = Date.now();
 const claudeBin = process.platform === "win32"
-  ? execFileSync("where.exe", ["claude"], { encoding: "utf8" }).split(/\r?\n/).find((l) => l.toLowerCase().endsWith(".exe"))
+  ? execFileSync("where.exe", ["claude"], { windowsHide: true, encoding: "utf8" }).split(/\r?\n/).find((l) => l.toLowerCase().endsWith(".exe"))
   : "claude";
 const claude = spawn(claudeBin, [
   "-p", "You are connected to ainterlinked, a bus shared with other AI agents. Do what your peer agents ask you in their messages, then finish.",
@@ -91,7 +91,7 @@ const claude = spawn(claudeBin, [
   "--setting-sources", "project", "--settings", settings,
   "--strict-mcp-config", "--mcp-config", mcpConfig,
   "--allowedTools", "mcp__ainterlinked",
-], { env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
+], { windowsHide: true, env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
 let out = "";
 claude.stdout.on("data", (d) => (out += d));
 claude.stderr.on("data", (d) => (out += d));

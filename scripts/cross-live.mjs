@@ -50,7 +50,7 @@ const deadline = t0 + HARD_LIMIT_MS;
 const stampLine = (s) => `[${((Date.now() - t0) / 1000).toFixed(1).padStart(6)}s] ${s}`;
 const say = (s) => { const l = stampLine(s); console.log(l); appendFileSync(join(OUT, "timeline.txt"), l + "\n"); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const il = (...a) => spawnSync(IL, a, { env, encoding: "utf8" }).stdout ?? "";
+const il = (...a) => spawnSync(IL, a, { windowsHide: true, env, encoding: "utf8" }).stdout ?? "";
 
 // --- the project: a tiny cart with a float rounding bug ---------------------
 writeFileSync(join(HOME, "config.toml"), 'machine = "workstation"\n');
@@ -90,7 +90,7 @@ writeFileSync(join(PROJECT, ".ainterlinked", "covenant.md"), [
   "- Propose changes to the owner; don't edit the covenant yourself.",
   "",
 ].join("\n"));
-const git = (...a) => spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", ...a], { cwd: PROJECT, encoding: "utf8" });
+const git = (...a) => spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", ...a], { windowsHide: true, cwd: PROJECT, encoding: "utf8" });
 git("init", "-q", "-b", "main");
 git("add", ".");
 git("commit", "-q", "-m", "init");
@@ -113,12 +113,12 @@ const waitFor = async (fn, ms = 1000, until = deadline) => {
 
 // --- dashboard + recording ----------------------------------------------------
 const procs = [];
-const serve = spawn(IL, ["serve", "--listen", `127.0.0.1:${PORT}`], { env, stdio: "ignore" });
+const serve = spawn(IL, ["serve", "--listen", `127.0.0.1:${PORT}`], { windowsHide: true, env, stdio: "ignore" });
 procs.push(serve);
 const up = async () => { try { return (await fetch(`http://127.0.0.1:${PORT}/`)).ok; } catch { return false; } };
 for (const end = Date.now() + 10_000; Date.now() < end && !(await up());) await sleep(200);
 const STOP = join(ROOT, "stop-recording");
-const recorder = spawn("python", ["-I", join(HERE, "record_dashboard.py"), `http://127.0.0.1:${PORT}/`, OUT, STOP, String(HARD_LIMIT_MS / 1000 + 30)], { stdio: ["ignore", "pipe", "pipe"] });
+const recorder = spawn("python", ["-I", join(HERE, "record_dashboard.py"), `http://127.0.0.1:${PORT}/`, OUT, STOP, String(HARD_LIMIT_MS / 1000 + 30)], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 let recLog = "";
 recorder.stdout.on("data", (d) => (recLog += d));
 recorder.stderr.on("data", (d) => (recLog += d));
@@ -128,7 +128,7 @@ procs.push(recorder);
 // The activity feed as a terminal recording (asciicast v2, plays with asciinema).
 const cast = createWriteStream(join(OUT, "feed.cast"));
 cast.write(JSON.stringify({ version: 2, width: 110, height: 30, timestamp: Math.floor(t0 / 1000), title: "ainterlinked feed -f" }) + "\n");
-const feed = spawn(IL, ["feed", "-f", "-n", "50"], { env, stdio: ["ignore", "pipe", "ignore"] });
+const feed = spawn(IL, ["feed", "-f", "-n", "50"], { windowsHide: true, env, stdio: ["ignore", "pipe", "ignore"] });
 feed.stdout.on("data", (d) => cast.write(JSON.stringify([(Date.now() - t0) / 1000, d.toString().replace(/\r?\n/g, "\r\n")]) + "\n"));
 procs.push(feed);
 
@@ -157,7 +157,7 @@ const claudePrompt = [
   "Never run shell commands. Never edit any file other than cart.js.",
 ].join("\n");
 const claudeBin = process.platform === "win32"
-  ? execFileSync("where.exe", ["claude"], { encoding: "utf8" }).split(/\r?\n/).find((l) => l.toLowerCase().endsWith(".exe"))
+  ? execFileSync("where.exe", ["claude"], { windowsHide: true, encoding: "utf8" }).split(/\r?\n/).find((l) => l.toLowerCase().endsWith(".exe"))
   : "claude";
 const claudeLog = createWriteStream(join(OUT, "claude.jsonl"));
 say(DRY ? "dry run: no agents" : "starting Claude Code (haiku)");
@@ -167,7 +167,7 @@ const claude = spawn(DRY ? process.execPath : claudeBin, DRY ? ["-e", "setTimeou
   "--setting-sources", "project", "--settings", settings,
   "--strict-mcp-config", "--mcp-config", mcpConfig,
   "--allowedTools", "mcp__ainterlinked", "Read", "Edit",
-], { env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
+], { windowsHide: true, env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
 claude.stdout.pipe(claudeLog);
 claude.stderr.on("data", (d) => claudeLog.write(d));
 const claudeDone = new Promise((r) => claude.on("exit", r));
@@ -198,7 +198,7 @@ if (claudeReady) {
   const codexLog = createWriteStream(join(OUT, "codex.jsonl"));
   codex = spawn(CODEX, ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write", "-C", PROJECT,
     "-c", `mcp_servers.ainterlinked.env.AINTERLINKED_HOME="${HOME.replaceAll("\\", "/")}"`, codexPrompt],
-  { env, stdio: ["ignore", "pipe", "pipe"] });
+  { windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] });
   codex.stdout.pipe(codexLog);
   codex.stderr.on("data", (d) => codexLog.write(d));
   codexDone = new Promise((r) => codex.on("exit", r));

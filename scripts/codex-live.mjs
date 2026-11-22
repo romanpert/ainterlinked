@@ -29,7 +29,7 @@ const code = () => randomBytes(3).toString("hex").toUpperCase();
 const w1 = "PAPAYA" + code();
 const w2 = "MANGO" + code();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const il = (...a) => spawnSync(IL, a, { encoding: "utf8" }).stdout ?? "";
+const il = (...a) => spawnSync(IL, a, { windowsHide: true, encoding: "utf8" }).stdout ?? "";
 let failures = 0;
 const ok = (cond, what, extra = "") => {
   console.log(`${cond ? "PASS" : "FAIL"}  ${what}${extra ? "  — " + extra : ""}`);
@@ -48,7 +48,7 @@ const prompt = [
 // CODEX_MODEL overrides the configured model for this run only.
 const model = process.env.CODEX_MODEL ? ["-m", process.env.CODEX_MODEL] : [];
 const cx = spawn(CODEX, ["exec", "--skip-git-repo-check", "--ephemeral", ...model,
-  "-s", "read-only", "-C", DIR, prompt], { stdio: ["ignore", "pipe", "pipe"] });
+  "-s", "read-only", "-C", DIR, prompt], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 let log = "";
 cx.stdout.on("data", (d) => (log += d));
 cx.stderr.on("data", (d) => (log += d));

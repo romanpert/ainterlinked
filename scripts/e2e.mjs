@@ -27,7 +27,7 @@ const ok = (cond, what, extra = "") => {
 
 class MCP {
   constructor(harness) {
-    this.p = spawn(BIN, ["mcp", "--harness", harness], { env, cwd: PROJECT, stdio: ["pipe", "pipe", "inherit"] });
+    this.p = spawn(BIN, ["mcp", "--harness", harness], { windowsHide: true, env, cwd: PROJECT, stdio: ["pipe", "pipe", "inherit"] });
     this.id = 0;
     this.waiting = new Map();
     createInterface({ input: this.p.stdout }).on("line", (line) => {
@@ -59,7 +59,7 @@ function hook(harness, event, payload) {
   const shell = process.platform === "win32" ? "bash" : "sh";
   const cmd = `"${BIN.replaceAll("\\", "/")}" hook ${harness} ${event}`;
   const t0 = Date.now();
-  const r = spawnSync(shell, ["-c", cmd], { env, cwd: PROJECT, input: JSON.stringify({ cwd: PROJECT, ...payload }), encoding: "utf8" });
+  const r = spawnSync(shell, ["-c", cmd], { windowsHide: true, env, cwd: PROJECT, input: JSON.stringify({ cwd: PROJECT, ...payload }), encoding: "utf8" });
   return { out: r.stdout.trim() ? JSON.parse(r.stdout) : null, ms: Date.now() - t0, code: r.status };
 }
 // The human operator types in a terminal of their own, outside every agent's
@@ -73,28 +73,28 @@ const ORPHAN = `
 const cp=require('child_process'),fs=require('fs');
 const [bin,out,...args]=process.argv.slice(1);
 if(process.env.IL_STAGE!=='2'){
-  cp.spawn(process.execPath,['-e',process.env.IL_ORPHAN,...process.argv.slice(1)],{detached:true,stdio:'ignore',env:{...process.env,IL_STAGE:'2'}}).unref();
+  cp.spawn(process.execPath,['-e',process.env.IL_ORPHAN,...process.argv.slice(1)],{windowsHide:true,detached:true,stdio:'ignore',env:{...process.env,IL_STAGE:'2'}}).unref();
   process.exit(0);
 }
 const ppid=process.ppid;
 for(let i=0;i<200;i++){try{process.kill(ppid,0)}catch{break}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25)}
-const r=cp.spawnSync(bin,args,{encoding:'utf8'});
+const r=cp.spawnSync(bin,args,{windowsHide:true,encoding:'utf8'});
 fs.writeFileSync(out+'.tmp',JSON.stringify({status:r.status,stdout:r.stdout||'',stderr:r.stderr||''}));
 fs.renameSync(out+'.tmp',out);`;
 let cliRuns = 0;
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const cli = (...args) => {
   const out = join(HOME, `cli-${++cliRuns}.json`);
-  spawnSync(process.execPath, ["-e", ORPHAN, BIN, out, ...args], { env: { ...env, IL_ORPHAN: ORPHAN }, cwd: PROJECT });
+  spawnSync(process.execPath, ["-e", ORPHAN, BIN, out, ...args], { windowsHide: true, env: { ...env, IL_ORPHAN: ORPHAN }, cwd: PROJECT });
   for (let i = 0; i < 600 && !existsSync(out); i++) sleepSync(25);
   return existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : { status: -1, stdout: "", stderr: "the detached CLI never answered" };
 };
 // The same CLI run straight from the "harness" (an agent's shell), and
 // wrapped in another program (node) by it: both are that agent.
-const agentCli = (...args) => spawnSync(BIN, args, { env, cwd: PROJECT, encoding: "utf8" });
-const WRAP = "const c=require('child_process').spawn(process.argv[1],process.argv.slice(2),{stdio:'inherit'});c.on('exit',(x)=>process.exit(x??1))";
-const wrappedCli = (...args) => spawnSync(process.execPath, ["-e", WRAP, BIN, ...args], { env, cwd: PROJECT, encoding: "utf8" });
-const killTree = (p) => (process.platform === "win32" ? spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)]) : p.kill());
+const agentCli = (...args) => spawnSync(BIN, args, { windowsHide: true, env, cwd: PROJECT, encoding: "utf8" });
+const WRAP = "const c=require('child_process').spawn(process.argv[1],process.argv.slice(2),{windowsHide:true,stdio:'inherit'});c.on('exit',(x)=>process.exit(x??1))";
+const wrappedCli = (...args) => spawnSync(process.execPath, ["-e", WRAP, BIN, ...args], { windowsHide: true, env, cwd: PROJECT, encoding: "utf8" });
+const killTree = (p) => (process.platform === "win32" ? spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)], { windowsHide: true }) : p.kill());
 
 try {
   const a = new MCP("claude-code");
@@ -179,7 +179,7 @@ try {
 
   // HTTP dashboard state.
   const port = 17700 + Math.floor(Math.random() * 200);
-  const srv = spawn(process.execPath, ["-e", WRAP, BIN, "serve", "--listen", `127.0.0.1:${port}`], { env, stdio: "ignore" });
+  const srv = spawn(process.execPath, ["-e", WRAP, BIN, "serve", "--listen", `127.0.0.1:${port}`], { windowsHide: true, env, stdio: "ignore" });
   let state = null;
   for (let i = 0; i < 30 && !state; i++) {
     await new Promise((r) => setTimeout(r, 150));
@@ -194,7 +194,7 @@ try {
   // machine right now (antivirus and load can make any spawn slow).
   const median = (f) => { const t = []; for (let i = 0; i < 5; i++) t.push(f()); t.sort((x, y) => x - y); return t[2]; };
   const shell = process.platform === "win32" ? "bash" : "sh";
-  const base = median(() => { const t0 = Date.now(); spawnSync(shell, ["-c", "true"]); return Date.now() - t0; });
+  const base = median(() => { const t0 = Date.now(); spawnSync(shell, ["-c", "true"], { windowsHide: true }); return Date.now() - t0; });
   const hookMs = median(() => hook("claude-code", "PostToolUse", { session_id: "sess-A", tool_name: "Read" }).ms);
   // Informational: a freshly built, unsigned binary can pay antivirus scans
   // on every spawn. ainterlinked's own work is guarded in-process by
