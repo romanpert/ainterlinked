@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,6 +76,45 @@ func TestNobodyHoldsASharedFile(t *testing.T) {
 	}
 	if l, _ := s.CheckFile(ctx, b.ID, "src/app.go"); l == nil {
 		t.Fatal("the rest of a's ** must still be a's")
+	}
+}
+
+// Only the owner takes files out of reservations; the hub keeps the list.
+func TestOnlyTheOwnerSharesFiles(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	a := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 1})
+	b := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 2})
+	owner := reg(t, s, RegisterReq{Harness: "human", Project: "app", AnchorPID: 3})
+	if _, err := s.SetShared(ctx, SharedReq{By: a.ID, ProjectPath: "/work/app", Files: []string{"src/held.go"}}); err == nil {
+		t.Fatal("an agent shared a file")
+	}
+	for _, bad := range []string{"**", "src/*.go", "docs/", "."} {
+		if _, err := s.SetShared(ctx, SharedReq{By: owner.ID, ProjectPath: "/work/app", Files: []string{bad}}); err == nil {
+			t.Fatalf("%q was accepted as a shared file", bad)
+		}
+	}
+	got, err := s.SetShared(ctx, SharedReq{By: owner.ID, ProjectPath: "/work/app", Files: []string{"./NEXT.md", "/work/app/docs/log.md", "NEXT.md"}})
+	if err != nil || strings.Join(got.Files, ",") != "NEXT.md,docs/log.md" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if l, _ := s.TouchFile(ctx, a.ID, "NEXT.md"); l != nil {
+		t.Fatal(l)
+	}
+	if l, _ := s.TouchFile(ctx, b.ID, "/work/app/NEXT.md"); l != nil {
+		t.Fatalf("a shared file was held: %+v", l)
+	}
+	if _, err := s.SetShared(ctx, SharedReq{By: owner.ID, ProjectPath: "/work/app"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.TouchFile(ctx, a.ID, "NEXT.md"); l != nil {
+		t.Fatal(l)
+	}
+	if l, _ := s.TouchFile(ctx, b.ID, "NEXT.md"); l == nil {
+		t.Fatal("unshared, NEXT.md is the editor's again")
+	}
+	if list, _ := s.GetShared(ctx, "/work/app"); len(list.Files) != 0 {
+		t.Fatalf("cleared list: %+v", list)
 	}
 }
 

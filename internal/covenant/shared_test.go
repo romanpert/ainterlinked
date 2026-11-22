@@ -1,12 +1,8 @@
 package covenant
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestSharedSections(t *testing.T) {
@@ -45,71 +41,5 @@ func TestSharedSections(t *testing.T) {
 	var nilC *Covenant
 	if nilC.IsShared("NEXT.md") {
 		t.Fatal("no covenant shares nothing")
-	}
-}
-
-// What frees a file from reservations is the covenant as committed: an
-// agent's uncommitted edit to it frees nothing.
-func TestSharesReadsTheCommittedCovenant(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
-	old := Recheck
-	Recheck = 0
-	defer func() { Recheck = old }()
-
-	root := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	write := func(s string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Join(root, ".ainterlinked"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, ".ainterlinked", "covenant.md"), []byte(s), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	run("init", "-q")
-	write("## shared: NEXT.md\n")
-	if Shares(root, "NEXT.md") {
-		t.Fatal("an uncommitted covenant shares nothing")
-	}
-	run("add", ".")
-	run("commit", "-q", "-m", "covenant")
-	if !Shares(root, "NEXT.md") || Shares(root, "README.md") {
-		t.Fatal("the committed covenant was not read")
-	}
-	write("## shared: NEXT.md, src/held.go\n")
-	if Shares(root, "src/held.go") {
-		t.Fatal("an uncommitted amendment freed a file")
-	}
-	run("commit", "-q", "-am", "amend")
-	if !Shares(root, "src/held.go") {
-		t.Fatal("a committed amendment was not read")
-	}
-	if Shares(`\\server\share\repo`, "NEXT.md") || Shares("relative/repo", "NEXT.md") {
-		t.Fatal("only local absolute roots are looked up")
-	}
-}
-
-func TestSharesLooksUpAtMostEveryRecheck(t *testing.T) {
-	old := Recheck
-	Recheck = time.Hour
-	defer func() { Recheck = old }()
-	root := t.TempDir() // not a repo: nothing shared, and not asked again
-	if Shares(root, "NEXT.md") {
-		t.Fatal("not a repo")
-	}
-	e := sharedCache.m[root]
-	first := e.checked
-	Shares(root, "NEXT.md")
-	if !e.checked.Equal(first) {
-		t.Fatal("looked up again within Recheck")
 	}
 }
