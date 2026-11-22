@@ -10,6 +10,7 @@ import (
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/session"
 )
 
 // Reservations are enforced before edit tools run (PreToolUse). A shell
@@ -177,6 +178,9 @@ func trespass(ctx context.Context, c hub.Client, me core.Agent, in Input) string
 		if !filepath.IsAbs(f) && in.Cwd != "" {
 			f = filepath.Join(in.Cwd, f)
 		}
+		// Reservations hold canonical paths (session.Detect), as in touchFile:
+		// on macOS the cwd a harness reports goes through /var -> /private/var.
+		f = session.Canonical(f)
 		var l *core.Lock
 		if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: f}, &l); err != nil || l == nil || l.Agent == core.SystemSender {
 			continue
