@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"github.com/romanpert/ainterlinked/internal/env"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -376,7 +377,7 @@ func (c *cursor) read(path string, visit func([]byte)) {
 // codexFind returns Codex's transcript of a session:
 // ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<session id>.jsonl.
 func codexFind(session string) string {
-	h, err := os.UserHomeDir()
+	h, err := env.OSHome()
 	if err != nil || !safeID(session) {
 		return ""
 	}

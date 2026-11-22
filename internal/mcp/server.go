@@ -233,6 +233,10 @@ func harnessFromClient(name string) string {
 		return "qwen"
 	case strings.Contains(n, "opencode"):
 		return "opencode"
+	case strings.Contains(n, "muse"):
+		return "muse"
+	case strings.Contains(n, "grok"):
+		return "grok"
 	case strings.Contains(n, "windsurf"), strings.Contains(n, "codeium"), strings.Contains(n, "cascade"):
 		return "windsurf"
 	case strings.Contains(n, "visual studio code"), strings.Contains(n, "vscode"):

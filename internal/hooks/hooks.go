@@ -114,7 +114,7 @@ func ParseInput(data []byte) Input {
 			in.ToolName = "Edit"
 		}
 	}
-	in.StopHookActive, _ = m["stop_hook_active"].(bool)
+	in.StopHookActive, _ = firstOf(m, "stop_hook_active", "stopHookActive").(bool)
 	if lc, ok := m["loop_count"].(float64); ok {
 		in.LoopCount = int(lc)
 	}
@@ -203,7 +203,7 @@ func Delivery(harness string) string {
 	switch harness {
 	case "opencode":
 		return "push"
-	case "claude-code", "codex", "copilot", "copilot-cli", "vscode", "gemini", "qwen", "cursor":
+	case "claude-code", "codex", "copilot", "copilot-cli", "vscode", "gemini", "qwen", "cursor", "muse", "grok":
 		return "turn"
 	}
 	return "pull"
@@ -217,7 +217,7 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 		}
 	}()
 	kind := Normalize(event)
-	if kind == "" || !cfg.HarnessEnabled(harness) {
+	if kind == "" || !cfg.HarnessEnabled(harness) || borrowed(harness) {
 		return
 	}
 	// One deadline for the whole hook, well under every harness's timeout:
@@ -262,6 +262,13 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 	case <-ctx.Done():
 		logf("hook %s %s: gave up after %s (hub open after %dms)", harness, event, Budget, opened.Load())
 	}
+}
+
+// borrowed reports a hook run by a harness it wasn't written for: Grok Build
+// also runs the hooks in Claude Code's and Cursor's files, where it would
+// register as them. Its own file (harness "grok") covers it.
+func borrowed(harness string) bool {
+	return harness != "grok" && os.Getenv("GROK_HOOK_EVENT") != ""
 }
 
 // Budget bounds a hook invocation end to end (harness timeouts are 15 s).

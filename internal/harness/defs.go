@@ -12,13 +12,13 @@ import (
 func All() []*Harness {
 	return []*Harness{
 		claudeCode(), codex(), copilotCLI(), vscode(), cursor(), gemini(), opencode(),
-		qwen(), windsurf(), kiro(), zed(), cline(), crush(),
+		qwen(), muse(), grok(), windsurf(), kiro(), zed(), cline(), crush(),
 	}
 }
 
 // ByID finds a harness by id or common alias.
 func ByID(id string) *Harness {
-	aliases := map[string]string{"claude": "claude-code", "copilot": "copilot-cli", "code": "vscode", "vs-code": "vscode", "devin": "windsurf"}
+	aliases := map[string]string{"claude": "claude-code", "copilot": "copilot-cli", "code": "vscode", "vs-code": "vscode", "devin": "windsurf", "muse-code": "muse", "grok-build": "grok"}
 	if a, ok := aliases[strings.ToLower(id)]; ok {
 		id = a
 	}

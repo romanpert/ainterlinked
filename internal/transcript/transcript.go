@@ -7,6 +7,7 @@ package transcript
 
 import (
 	"bytes"
+	"github.com/romanpert/ainterlinked/internal/env"
 	"io"
 	"os"
 	"path/filepath"
@@ -89,7 +90,7 @@ var readers = map[string]reader{
 // both.)
 func claudeRoots() []string {
 	var out []string
-	if h, err := os.UserHomeDir(); err == nil {
+	if h, err := env.OSHome(); err == nil {
 		out = append(out, filepath.Join(h, ".claude"))
 	}
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(d) {

@@ -33,8 +33,10 @@ func Format(harness, event string, kind Kind, res Result) map[string]any {
 		return gemini(event, kind, res)
 	case "opencode":
 		return opencode(kind, res)
+	case "grok":
+		return grok(event, kind, res)
 	}
-	// Claude Code, Codex, Qwen Code, Devin and other Claude-compatible hooks.
+	// Claude Code, Codex, Qwen Code, Muse Code, Devin and other Claude-compatible hooks.
 	return claudeLike(event, kind, res)
 }
 
@@ -53,6 +55,15 @@ func claudeLike(event string, kind Kind, res Result) map[string]any {
 		return map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": res.Context}}
 	}
 	return nil
+}
+
+// grok takes Claude's output, but discards what SessionStart and
+// UserPromptSubmit hooks print: mail waits there for an event that shows it.
+func grok(event string, kind Kind, res Result) map[string]any {
+	if res.Context != "" && kind != PostTool {
+		return nil
+	}
+	return claudeLike(event, kind, res)
 }
 
 func copilotCamel(kind Kind, res Result) map[string]any {

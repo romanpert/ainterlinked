@@ -142,7 +142,7 @@ func UserHome() string {
 	if h := env.Get("USER_HOME"); h != "" {
 		return h
 	}
-	h, err := os.UserHomeDir()
+	h, err := env.OSHome()
 	if err != nil {
 		return "."
 	}
