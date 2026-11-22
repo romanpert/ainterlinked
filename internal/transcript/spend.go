@@ -268,12 +268,13 @@ func claudeTurn(line []byte) (cause string, at int64, ok bool) {
 	if e.Origin != nil {
 		how = e.Origin.Kind
 	}
+	// A session ainterlinked woke, whatever Claude Code files it as (a
+	// background hook that wakes one comes as a task notification).
+	if how != "" && how != "peer" && bytes.Contains(line, []byte(WakeMark)) {
+		return CausePeer, t.UnixMilli(), true
+	}
 	switch how {
 	case "human", "sdk":
-		// A session ainterlinked woke, whatever Claude Code calls that entry.
-		if strings.Contains(textOf(e.Message.Content), WakeMark) {
-			return CausePeer, t.UnixMilli(), true
-		}
 		return CauseOwn, t.UnixMilli(), true
 	case "peer":
 		var text string

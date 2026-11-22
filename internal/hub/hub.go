@@ -154,6 +154,7 @@ func Methods(s *core.Store) map[string]handler {
 		"task_want":   op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.WantTask(ctx, p.Agent, p.ID) }),
 		"trespass":    op(s.RecordTrespass),
 		"turn":        op(s.MarkTurn),
+		"wake":        op(func(ctx context.Context, p AgentParam) (bool, error) { return s.Wake(ctx, p.Agent) }),
 		"spend":       op(s.GetSpend),
 		"budget":      op(s.SetBudget),
 		"get_budget":  op(func(ctx context.Context, _ Empty) (core.Budget, error) { return s.GetBudget(ctx) }),

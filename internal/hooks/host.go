@@ -23,5 +23,5 @@ func runsAs(harness string) (as string, run bool) {
 		return harness, true
 	}
 	b, _ := os.ReadFile(filepath.Join(config.UserHome(), ".grok", "hooks", "ainterlinked.json"))
-	return "grok", !strings.Contains(string(b), " hook grok ")
+	return "grok", !strings.Contains(string(b), " hook grok PreToolUse")
 }

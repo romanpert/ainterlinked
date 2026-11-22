@@ -16,10 +16,13 @@ import (
 // the count is in meta, which every schema has.
 
 // TurnReq reports a turn event for Agent: User when the user prompted,
-// otherwise the turn was held open by peer mail.
+// otherwise the turn was held open by peer mail. Woken: it is the turn of a
+// wake-up that was counted when it was queued; a prompt of the user's in
+// between doesn't make it theirs.
 type TurnReq struct {
 	Agent string `json:"agent"`
 	User  bool   `json:"user,omitempty"`
+	Woken bool   `json:"woken,omitempty"`
 }
 
 func turnKey(agent string) string { return "turn_held:" + agent }
@@ -39,7 +42,9 @@ func (s *Store) MarkTurn(ctx context.Context, r TurnReq) (int, error) {
 	}
 	var n int
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		n = heldIn(tx, r.Agent) + 1
+		if n = heldIn(tx, r.Agent); n == 0 || !r.Woken {
+			n++
+		}
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, turnKey(r.Agent), strconv.Itoa(n)); err != nil {
 			return err
 		}

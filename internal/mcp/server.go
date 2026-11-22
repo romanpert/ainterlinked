@@ -227,6 +227,8 @@ func harnessFromClient(name string) string {
 		return "codex"
 	case strings.Contains(n, "cursor"):
 		return "cursor"
+	case strings.Contains(n, "antigravity"):
+		return "antigravity"
 	case strings.Contains(n, "gemini"):
 		return "gemini"
 	case strings.Contains(n, "qwen"):

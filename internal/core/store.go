@@ -146,6 +146,8 @@ type Options struct {
 	Alive   func(pids []int) (map[int]bool, error)
 	// Busy is how long to wait for another writer (0 = 10 s).
 	Busy time.Duration
+	// Now is the clock (nil = time.Now); tests move it.
+	Now func() time.Time
 	// Limits are the user's terms (nil = DefaultLimits).
 	Limits *Limits
 	// Shared overrides, for tests, whether a project-relative file is shared:
@@ -196,7 +198,7 @@ func Open(path string, opt Options) (*Store, error) {
 	if opt.Stale <= 0 {
 		opt.Stale = 45 * time.Second
 	}
-	s := &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now,
+	s := &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: opt.clock(),
 		shared: opt.Shared, keyPath: filepath.Join(filepath.Dir(path), "hub.key")}
 	limits := DefaultLimits()
 	if opt.Limits != nil {
@@ -208,6 +210,13 @@ func Open(path string, opt Options) (*Store, error) {
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
+
+func (o Options) clock() func() time.Time {
+	if o.Now != nil {
+		return o.Now
+	}
+	return time.Now
+}
 
 func (s *Store) ms() int64 { return s.now().UnixMilli() }
 

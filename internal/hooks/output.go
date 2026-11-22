@@ -9,6 +9,9 @@ import (
 // when there's nothing to say (every harness treats empty output as "go on").
 func Write(w io.Writer, harness, event string, kind Kind, res Result) {
 	out := Format(harness, event, kind, res)
+	if out == nil && harness == "antigravity" {
+		out = antigravityNothing(kind)
+	}
 	if out == nil {
 		return
 	}
@@ -35,6 +38,8 @@ func Format(harness, event string, kind Kind, res Result) map[string]any {
 		return opencode(kind, res)
 	case "grok":
 		return grok(event, kind, res)
+	case "antigravity":
+		return antigravityOut(kind, res)
 	}
 	// Claude Code, Codex, Qwen Code, Muse Code, Devin and other Claude-compatible hooks.
 	return claudeLike(event, kind, res)

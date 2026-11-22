@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,10 +31,16 @@ type wakeBox struct {
 func newWakeBox(t *testing.T) *wakeBox {
 	t.Helper()
 	t.Setenv("AINTERLINKED_HOME", t.TempDir())
-	srv, _ := startServer(t, func(int) (int, string) { return 4242, "codex" })
-	b := &wakeBox{t: t, st: srv.Store, clock: time.Now()}
+	b := &wakeBox{t: t, clock: time.Now()}
+	dir := t.TempDir()
+	st, err := core.Open(filepath.Join(dir, "hub.db"), core.Options{Stale: 24 * time.Hour, Now: func() time.Time { return b.clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	b.st = st
+	srv := NewServer(st)
 	b.w = srv.newWaker()
-	b.w.now = func() time.Time { return b.clock }
 	b.w.over = func(context.Context, string) bool { return b.over }
 	b.w.queue = func(_ context.Context, th, text string) error {
 		b.queued = append(b.queued, th+" "+text)
@@ -145,28 +152,6 @@ func TestAFailedWakeUp(t *testing.T) {
 	}
 	if a, _ := b.st.Get(context.Background(), b.codex.ID); a.Delivery != "turn" {
 		t.Fatalf("delivery %s", a.Delivery)
-	}
-}
-
-func TestWakeUpsAreSpacedOut(t *testing.T) {
-	b := newWakeBox(t)
-	b.st.SetLimits(core.Limits{}) // no max_holds: the pace still holds
-	for i := 0; i < wakesHourly+5; i++ {
-		b.send(b.codex.Name, "hi")
-		b.clock = b.clock.Add(wakeSpacing)
-		b.w.round(context.Background())
-	}
-	if len(b.queued) != wakesHourly {
-		t.Fatalf("%d wake-ups in an hour", len(b.queued))
-	}
-	b.clock = b.clock.Add(2 * time.Hour)
-	b.send(b.codex.Name, "hi")
-	b.w.round(context.Background())
-	b.clock = b.clock.Add(wakeSpacing / 3)
-	b.send(b.codex.Name, "hi")
-	b.w.round(context.Background())
-	if len(b.queued) != wakesHourly+1 {
-		t.Fatalf("not spaced out: %d", len(b.queued))
 	}
 }
 

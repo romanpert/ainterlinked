@@ -3,7 +3,16 @@ package core
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
+	"time"
+)
+
+// The pace of waking one session, whatever max_holds says: two agents that
+// write to each other must not wake each other without end.
+const (
+	WakeSpacing = 15 * time.Second
+	WakesHourly = 30
 )
 
 // Wakeable is an idle agent with unread mail addressed to it by name that it
@@ -58,14 +67,58 @@ func (s *Store) wokenUpTo(ctx context.Context, agent string) int64 {
 	return n
 }
 
-// Waking records, before it is tried, that w is being woken for the mail it
-// has: the turn is peers' and the same mail never wakes it twice.
-func (s *Store) Waking(ctx context.Context, w Wakeable) error {
-	if _, err := s.MarkTurn(ctx, TurnReq{Agent: w.ID}); err != nil {
-		return err
+// Wake says whether an agent may be woken now and, if so, records it before
+// it is tried: the turn it starts is peers'. Every way of waking asks here.
+func (s *Store) Wake(ctx context.Context, agent string) (bool, error) {
+	ok := false
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		held := heldIn(tx, agent)
+		if s.lim().HeldOut(held) {
+			return nil
+		}
+		now := s.ms()
+		var v string
+		var all, recent []int64
+		if tx.QueryRow(`SELECT value FROM meta WHERE key=?`, wakesKey(agent)).Scan(&v) == nil {
+			_ = json.Unmarshal([]byte(v), &all)
+		}
+		for _, at := range all {
+			if now-at < time.Hour.Milliseconds() {
+				recent = append(recent, at)
+			}
+		}
+		if n := len(recent); n >= WakesHourly || (n > 0 && now-recent[n-1] < WakeSpacing.Milliseconds()) {
+			return nil
+		}
+		b, err := json.Marshal(append(recent, now))
+		if err != nil {
+			return err
+		}
+		for k, v := range map[string]string{
+			wakesKey(agent):  string(b),
+			turnKey(agent):   strconv.Itoa(held + 1),
+			heldAtKey(agent): strconv.FormatInt(now, 10),
+		} {
+			if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, k, v); err != nil {
+				return err
+			}
+		}
+		ok = true
+		return nil
+	})
+	return ok && err == nil, err
+}
+
+func wakesKey(agent string) string { return "wakes:" + agent }
+
+// Waking is Wake for the mail w has, which never wakes it twice.
+func (s *Store) Waking(ctx context.Context, w Wakeable) (bool, error) {
+	ok, err := s.Wake(ctx, w.ID)
+	if !ok || err != nil {
+		return false, err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, wokenKey(w.ID), strconv.FormatInt(w.last, 10))
-	return err
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, wokenKey(w.ID), strconv.FormatInt(w.last, 10))
+	return err == nil, err
 }
 
 // WakeResult records whether waking an agent works, as the delivery its

@@ -3,9 +3,11 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,29 +166,100 @@ func TestOnlyMailByNameWakes(t *testing.T) {
 	}
 }
 
-// Off unless the user turns it on, and only under Claude Code: any other
-// harness that runs Claude's hook files would wait in the foreground.
-func TestTheWaiterNeedsTheUserAndClaude(t *testing.T) {
+// Off unless the user turns it on.
+func TestTheWaiterNeedsTheUser(t *testing.T) {
 	e := waking(t)
 	e.idleClaude()
 	e.send("2", me(), "hi")
-	old := anchorName
-	t.Cleanup(func() { anchorName = old })
-	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "")
-	for name, set := range map[string]func(){
-		"off":     func() { anchorName = func() string { return "claude" }; e.cfg.Delivery.WakeIdle = false },
-		"vs code": func() { anchorName = func() string { return "code" }; e.cfg.Delivery.WakeIdle = true },
-		"a Codex": func() { anchorName = func() string { return "codex" } },
-		"disabled": func() {
-			anchorName = func() string { return "claude" }
-			e.cfg.Harnesses["claude-code"] = config.HarnessCfg{}
-		},
-	} {
-		set()
+	inTerminal(t)
+	e.cfg.Delivery.WakeIdle = false
+	run := func() (int, string) {
 		var out bytes.Buffer
-		if code := Wait(context.Background(), e.cfg, "claude-code", strings.NewReader("{}"), &out); code != 0 || out.Len() > 0 {
-			t.Errorf("%s: exit %d, %q", name, code, out.String())
+		return Wait(context.Background(), e.cfg, "claude-code", strings.NewReader("{}"), &out), out.String()
+	}
+	if code, out := run(); code != 0 || out != "" {
+		t.Fatalf("off: exit %d, %q", code, out)
+	}
+	e.cfg.Delivery.WakeIdle = true
+	e.cfg.Harnesses["claude-code"] = config.HarnessCfg{}
+	if code, out := run(); code != 0 || out != "" {
+		t.Fatalf("muted: exit %d, %q", code, out)
+	}
+}
+
+// inTerminal: the hook runs inside `claude` in a terminal.
+func inTerminal(t *testing.T) {
+	t.Helper()
+	name, args := anchorName, programArgs
+	t.Cleanup(func() { anchorName, programArgs = name, args })
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	anchorName = func() string { return "claude" }
+	programArgs = func() ([]string, error) { return []string{"claude", "fix the tests"}, nil }
+}
+
+// Anywhere the hook would run in the foreground, the session would hang
+// until mail came: it must not wait there.
+func TestTheWaiterOnlyWaitsInTheBackground(t *testing.T) {
+	inTerminal(t)
+	stream := []string{"claude", "--output-format", "stream-json", "--input-format", "stream-json"}
+	for name, c := range map[string]struct {
+		anchor, entry string
+		args          []string
+		err           error
+		want          bool
+	}{
+		"a terminal":                    {"claude", "cli", []string{"claude", "--resume", "x"}, nil, true},
+		"VS Code":                       {"claude", "claude-vscode", stream, nil, true},
+		"the desktop app":               {"claude", "claude-desktop", stream, nil, true},
+		"claude -p":                     {"claude", "sdk-cli", []string{"claude", "-p", "hi"}, nil, false},
+		"claude -p run by a session":    {"claude", "cli", []string{"claude", "-p", "hi"}, nil, false},
+		"... by one in VS Code":         {"claude", "claude-vscode", []string{"claude", "hi", "--print"}, nil, false},
+		"-p together with another flag": {"claude", "cli", []string{"claude", "-cp", "hi"}, nil, false},
+		"-p that streams":               {"claude", "claude-vscode", append([]string{"claude", "-p"}, stream[1:]...), nil, false},
+		"an SDK script":                 {"claude", "sdk-ts", stream, nil, false},
+		"Cursor opened by a session":    {"cursor", "cli", []string{"cursor", "."}, nil, false},
+		"no command line":               {"claude", "cli", nil, errors.New("denied"), false},
+	} {
+		t.Setenv("CLAUDE_CODE_ENTRYPOINT", c.entry)
+		anchorName = func() string { return c.anchor }
+		programArgs = func() ([]string, error) { return c.args, c.err }
+		if got := waitsInBackground(); got != c.want {
+			t.Errorf("%s: %v", name, got)
 		}
+	}
+}
+
+// stuck is a hub that takes calls and never answers.
+type stuck struct {
+	hub.Client
+	on atomic.Bool
+}
+
+func (s *stuck) Call(ctx context.Context, method string, params, out any) error {
+	if s.on.Load() {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return s.Client.Call(ctx, method, params, out)
+}
+
+func TestAStuckHubDoesNotKeepAWaiter(t *testing.T) {
+	e := waking(t)
+	old := wakeCall
+	wakeCall = 50 * time.Millisecond
+	t.Cleanup(func() { wakeCall = old })
+	e.idleClaude()
+	s := &stuck{Client: e.c}
+	e.t.Setenv("AINTERLINKED_ANCHOR_PID", me())
+	ch := make(chan string, 1)
+	go func() {
+		text, _ := waitForMail(context.Background(), e.cfg, s, "claude-code", Input{Cwd: e.dir})
+		ch <- text
+	}()
+	quiet(t, ch)
+	s.on.Store(true)
+	if out := ended(t, ch); out != "" {
+		t.Fatalf("woke with %q", out)
 	}
 }
 
@@ -207,5 +280,11 @@ func TestACodexWakeUpIsNotTheUsersPrompt(t *testing.T) {
 	}
 	if n, _ := e.c.Store.PeerHeld(context.Background(), id); n != 1 || Holds(id) != 1 {
 		t.Fatalf("held %d, holds %d", n, Holds(id))
+	}
+	// The user prompts while the next one is on its way.
+	e.as("1", "codex", "UserPromptSubmit", map[string]any{"prompt": "do this"})
+	e.as("1", "codex", "UserPromptSubmit", map[string]any{"prompt": transcript.WakeMark + " 1 new message(s)"})
+	if n, _ := e.c.Store.PeerHeld(context.Background(), id); n != 1 {
+		t.Fatalf("a woken turn passed as the user's (%d)", n)
 	}
 }

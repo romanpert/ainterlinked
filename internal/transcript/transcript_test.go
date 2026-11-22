@@ -135,9 +135,18 @@ func TestScanBackVisitsEveryLineLastFirst(t *testing.T) {
 // Whatever Claude Code calls the entry of a session ainterlinked woke, it is
 // peers' turn.
 func TestAWakeUpIsNotTheUsersPrompt(t *testing.T) {
-	p := write(t, human(1, "do it"), human(5, WakeMark+" Peer agents wrote to you"))
-	if o, _ := Read("claude-code", p, sid); o.User != 0 || o.Peer == 0 {
-		t.Fatalf("a wake-up passed as the user's: %+v", o)
+	for _, wake := range []string{
+		human(5, WakeMark+" Peer agents wrote to you"),
+		strings.Replace(notification(5), "done", WakeMark+" Peer agents wrote to you", 1),
+	} {
+		p := write(t, human(1, "do it"), wake)
+		if o, _ := Read("claude-code", p, sid); o.User != 0 || o.Peer == 0 {
+			t.Fatalf("a wake-up passed as the user's: %+v\n%s", o, wake)
+		}
+	}
+	p := write(t, human(1, "do it"), notification(5))
+	if o, _ := Read("claude-code", p, sid); o.User == 0 {
+		t.Fatalf("the session's own background work carries on the user's turn: %+v", o)
 	}
 	p = write(t, human(1, "do it"), human(5, WakeMark+" Peer agents wrote to you"), human(9, "now stop"))
 	if o, _ := Read("claude-code", p, sid); o.User == 0 || o.Peer != 0 {

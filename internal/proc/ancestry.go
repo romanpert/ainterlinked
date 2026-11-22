@@ -25,7 +25,7 @@ func AnchorOf(pid int) (int, string) {
 var harnessNames = map[string]bool{
 	"claude": true, "codex": true, "gemini": true, "opencode": true, "cursor-agent": true,
 	"copilot": true, "aider": true, "goose": true, "amp": true, "qwen": true,
-	"muse": true, "grok": true,
+	"muse": true, "grok": true, "agy": true,
 }
 
 // IsHarness reports whether an anchor's executable name is an agent harness.

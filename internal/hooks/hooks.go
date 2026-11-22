@@ -38,6 +38,7 @@ const (
 	PostTool Kind = "post_tool"
 	Stop     Kind = "stop"
 	End      Kind = "end"
+	Invoke   Kind = "invoke" // before a model call (Antigravity)
 )
 
 // Normalize maps a harness-native event name to a Kind.
@@ -55,6 +56,8 @@ func Normalize(event string) Kind {
 		return Stop
 	case "sessionend", "end":
 		return End
+	case "preinvocation":
+		return Invoke
 	}
 	return ""
 }
@@ -122,12 +125,13 @@ func ParseInput(data []byte) Input {
 	}
 	in.Prompt = str(m, "prompt")
 	in.Auto, _ = m["ainterlinked_auto"].(bool)
+	in.Model = str(m, "model")
+	parseAntigravity(m, &in)
 	in.Woken = strings.Contains(in.Prompt, transcript.WakeMark)
 	in.Auto = in.Auto || in.Woken
 	if old, ok := m["interlinked_auto"].(bool); ok && old { // an OpenCode plugin from before the rename
 		in.Auto = true
 	}
-	in.Model = str(m, "model")
 	return in
 }
 
@@ -207,7 +211,7 @@ func Delivery(harness string) string {
 	switch harness {
 	case "opencode":
 		return "push"
-	case "claude-code", "codex", "copilot", "copilot-cli", "vscode", "gemini", "qwen", "cursor", "muse", "grok":
+	case "claude-code", "codex", "copilot", "copilot-cli", "vscode", "gemini", "qwen", "cursor", "muse", "grok", "antigravity":
 		return "turn"
 	}
 	return "pull"
@@ -333,6 +337,13 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		_ = c.Call(ctx, "prefs", hub.AgentParam{Agent: me.ID}, &p)
 		return p
 	}
+	at := AtPrompt
+	if kind == Invoke {
+		if !userPrompted(me.ID, in) {
+			at = AtTool
+		}
+		kind = Prompt
+	}
 	switch kind {
 	case Start:
 		if !d.OnSessionStart || !ctxOK {
@@ -344,23 +355,28 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		// Only a real user prompt resets the auto-continue budget. Prompts we
 		// caused ourselves (an OpenCode wake-up) must not, or two agents could
 		// keep waking each other forever.
-		if !in.Auto {
+		if at != AtPrompt {
+			// Another model call of the same turn.
+		} else if !in.Auto {
 			ResetHolds(me.ID)
 			// The hub keeps who started the turn: what the agent does now is
 			// on the user's order.
 			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, User: true}, nil)
 		} else if in.Woken && harness == "codex" {
 			BumpHolds(me.ID) // the hub queued it; here it counts against the same limit
+			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, Woken: true}, nil)
 		}
-		activity := "on a new request from the user"
-		if cfg.Presence.SharePrompts {
-			activity = activityFromPrompt(in.Prompt)
+		if at == AtPrompt {
+			activity := "on a new request from the user"
+			if cfg.Presence.SharePrompts {
+				activity = activityFromPrompt(in.Prompt)
+			}
+			_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activity, Quiet: true}, nil)
 		}
-		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activity, Quiet: true}, nil)
 		if !ctxOK {
 			return Result{}, nil
 		}
-		if p := prefs(); ShouldInject(p, d, AtPrompt) {
+		if p := prefs(); ShouldInject(p, d, at) {
 			return Result{Context: Inject(ctx, c, me.ID, d, p, "", false)}, nil
 		}
 		return Result{}, nil
@@ -424,6 +440,10 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 
 	case Stop:
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "idle", Quiet: true}, nil)
+		// A turn that ended in an error isn't kept going into it again.
+		if why := str(in.raw, "terminationReason"); why != "" && why != "model_stop" {
+			return Result{}, nil
+		}
 		if in.LoopCount >= 5 || cfg.Limits.HeldOut(Holds(me.ID)) || !canSay(harness, event, kind, Result{Block: "x"}) {
 			return Result{}, nil
 		}

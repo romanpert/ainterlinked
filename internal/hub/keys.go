@@ -21,7 +21,7 @@ var actors = map[string]string{
 	"send": "from", "inbox": "agent", "unread": "agent", "wait": "agent",
 	"thread": "agent", "threads": "agent", "prefs": "agent", "set_prefs": "agent",
 	"task_create": "by", "task_update": "by", "task_claim": "agent", "task_want": "agent", "task_next": "agent",
-	"trespass": "writer", "turn": "agent", "spend": "agent", "budget": "by", "shared": "by",
+	"trespass": "writer", "turn": "agent", "wake": "agent", "spend": "agent", "budget": "by", "shared": "by",
 	"reserve": "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
 	"note": "agent", "machine_sample": "agent",
 	"handovers": "agent", "handover": "agent", "handover_note": "agent",

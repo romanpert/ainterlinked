@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,8 +27,15 @@ var (
 	wakeEvery = 5 * time.Second
 )
 
-// wakeMisses is how many times in a row the hub may not answer.
-const wakeMisses = 24
+// wakeMisses is how many times in a row the hub may not answer, wakeCall how
+// long it may take, and wakeLife how long a waiter lasts: its hook's timeout
+// is a day.
+const (
+	wakeMisses = 24
+	wakeLife   = 24*time.Hour - 10*time.Minute
+)
+
+var wakeCall = 10 * time.Second
 
 // Wait is Claude Code's background Stop hook (asyncRewake, wired only with
 // delivery.wake_idle): it waits for mail addressed to the idle session by
@@ -41,9 +49,11 @@ func Wait(ctx context.Context, cfg config.Config, harness string, stdin io.Reade
 			code = 0
 		}
 	}()
-	if harness != "claude-code" || !cfg.Delivery.WakeIdle || !cfg.HarnessEnabled(harness) || !insideClaude() {
+	if harness != "claude-code" || !cfg.Delivery.WakeIdle || !cfg.HarnessEnabled(harness) || !waitsInBackground() {
 		return 0
 	}
+	ctx, cancel := context.WithTimeout(ctx, wakeLife)
+	defer cancel()
 	in := ParseInput(readInput(ctx, stdin))
 	c, err := hub.OpenWithin(cfg, LockWait)
 	if err != nil {
@@ -62,17 +72,59 @@ func Wait(ctx context.Context, cfg config.Config, harness string, stdin io.Reade
 	return wakeExit
 }
 
-func insideClaude() bool {
-	if os.Getenv("GROK_HOOK_EVENT") != "" {
+// programArgs is how the program this hook runs inside was started (tests
+// replace it).
+var programArgs = func() ([]string, error) {
+	pid, _ := proc.Anchor()
+	return proc.Args(pid)
+}
+
+// waitsInBackground says whether the program running this hook is a Claude
+// Code session that runs asyncRewake hooks in the background. A headless one
+// (`claude -p`) and other harnesses that run Claude's hook files would wait
+// for it in the foreground, for as long as no mail comes: the environment
+// is inherited by whatever a session starts, so the program itself decides.
+func waitsInBackground() bool {
+	if anchorName() != "claude" {
 		return false
 	}
-	return anchorName() == "claude" || os.Getenv("CLAUDE_CODE_ENTRYPOINT") != ""
+	args, err := programArgs()
+	if err != nil || len(args) == 0 {
+		return false
+	}
+	streams := false
+	for i, a := range args[1:] {
+		next := ""
+		if i+2 < len(args) {
+			next = args[i+2]
+		}
+		switch {
+		case a == "--input-format=stream-json", a == "--input-format" && next == "stream-json":
+			streams = true
+		case a == "--print", strings.HasPrefix(a, "--print="), shortPrint.MatchString(a):
+			return false
+		}
+	}
+	// An app that keeps the session open, or a terminal. Scripts on the SDK
+	// also stream, and leave when they are done.
+	switch os.Getenv("CLAUDE_CODE_ENTRYPOINT") {
+	case "cli":
+		return !streams
+	case "claude-vscode", "claude-desktop", "claude-jetbrains":
+		return streams
+	}
+	return false
 }
+
+var shortPrint = regexp.MustCompile(`^-[a-z]*p[a-z]*$`)
 
 func waitForMail(ctx context.Context, cfg config.Config, c hub.Client, harness string, in Input) (string, error) {
 	sc := session.Detect(cfg, harness, in.Cwd)
 	var me core.Agent
-	if err := c.Call(ctx, "register", sc.Register("hook", "push", in.SessionID), &me); err != nil {
+	first, cancel := context.WithTimeout(ctx, wakeCall)
+	err := c.Call(first, "register", sc.Register("hook", "push", in.SessionID), &me)
+	cancel()
+	if err != nil {
 		return "", err
 	}
 	mine := takeWatch(me.ID)
@@ -83,7 +135,9 @@ func waitForMail(ctx context.Context, cfg config.Config, c hub.Client, harness s
 		if !mine() || !proc.Alive(sc.AnchorPID) {
 			return "", nil
 		}
-		text, done, err := tryWake(ctx, cfg, c, me.ID)
+		round, cancel := context.WithTimeout(ctx, wakeCall)
+		text, done, err := tryWake(round, cfg, c, me.ID)
+		cancel()
 		if text != "" || done {
 			return text, nil
 		}
@@ -127,7 +181,8 @@ func tryWake(ctx context.Context, cfg config.Config, c hub.Client, id string) (t
 	}
 	// Who starts this turn goes on record before it starts: were the mail
 	// taken first and the record to fail, peers' work would pass as the user's.
-	if err := c.Call(ctx, "turn", core.TurnReq{Agent: id}, nil); err != nil {
+	var allowed bool
+	if err := c.Call(ctx, "wake", hub.AgentParam{Agent: id}, &allowed); err != nil || !allowed {
 		return "", false, err
 	}
 	text = Inject(ctx, c, id, cfg.Delivery, p, transcript.WakeMark+" Peer agents wrote to you while you were idle. Handle it (reply with send_message if useful), then stop.\n\n", true)
