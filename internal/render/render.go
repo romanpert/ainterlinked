@@ -139,6 +139,15 @@ func PeerMessages(list []core.Message, maxChars int) string {
 	nonce := randNonce()
 	var b strings.Builder
 	b.WriteString(PeerHeader + "\n")
+	var full, briefs []core.Message
+	for _, m := range list {
+		if m.Mode == core.ModeBrief {
+			briefs = append(briefs, m)
+		} else {
+			full = append(full, m)
+		}
+	}
+	list = full
 	for i, m := range list {
 		body := strings.ReplaceAll(m.Body, nonce, "")
 		var one strings.Builder
@@ -155,16 +164,56 @@ func PeerMessages(list []core.Message, maxChars int) string {
 		fmt.Fprintf(&one, ">>\n%s\n<<end %s #%d>>\n", strings.TrimRight(body, "\n"), nonce, m.ID)
 		s := one.String()
 		if maxChars > 0 && b.Len()+len(s) > maxChars && i > 0 {
-			fmt.Fprintf(&b, "(+%d more — call read_inbox)\n", len(list)-i)
+			// Already marked read: name them so nothing is silently lost.
+			ids := make([]string, 0, len(list)-i)
+			for _, r := range list[i:] {
+				ids = append(ids, fmt.Sprintf("#%d", r.ID))
+			}
+			fmt.Fprintf(&b, "(+%d more not shown: get_thread %s)\n", len(ids), strings.Join(ids, " "))
 			break
 		}
 		if maxChars > 0 && len(s) > maxChars {
-			s = s[:maxChars] + fmt.Sprintf("…\n<<end %s #%d (truncated; get_thread %d for the rest)>>\n", nonce, m.ID, m.ID)
+			s = cutUTF8(s, maxChars) + fmt.Sprintf("…\n<<end %s #%d (truncated; get_thread %d for the rest)>>\n", nonce, m.ID, m.ID)
 		}
 		b.WriteString(s)
 	}
+	if len(briefs) > 0 {
+		fmt.Fprintf(&b, "<<peer-briefs %s: group announcements, one line each; get_thread <id> reads one in full>>\n", nonce)
+		for _, m := range briefs {
+			b.WriteString(strings.ReplaceAll(BriefLine(m), nonce, "") + "\n")
+		}
+		fmt.Fprintf(&b, "<<end %s briefs>>\n", nonce)
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// cutUTF8 shortens s to at most n bytes without splitting a character.
+func cutUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && n < len(s) && s[n]&0xC0 == 0x80 {
+		n--
+	}
+	return s[:n]
+}
+
+// briefChars is how much of a group message a brief shows.
+const briefChars = 160
+
+// BriefLine renders a message as one line: its subject, or the start of its body.
+func BriefLine(m core.Message) string {
+	text := oneLine(m.Body)
+	if m.Subject != "" {
+		text = oneLine(m.Subject) + " — " + text
+	}
+	if r := []rune(text); len(r) > briefChars {
+		text = string(r[:briefChars]) + "…"
+	}
+	return fmt.Sprintf("#%d %s → %s, %s ago: %s", m.ID, m.From, m.Target, Ago(m.CreatedAt), text)
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func randNonce() string {
 	var buf [6]byte
@@ -254,11 +303,152 @@ func Locks(list []core.Lock) string {
 	var b strings.Builder
 	for _, l := range list {
 		fmt.Fprintf(&b, "%s — %s", l.Pattern, l.Agent)
+		if l.TaskID > 0 {
+			fmt.Fprintf(&b, " · task #%d", l.TaskID)
+		}
 		if l.Reason != "" {
 			fmt.Fprintf(&b, " (reason %q)", l.Reason)
 		}
 		left := time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute)
 		fmt.Fprintf(&b, " · expires in %s · %s\n", left, l.ProjectPath)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Waiters renders a reservation queue.
+func Waiters(list []core.Waiter) string {
+	if len(list) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Queued:\n")
+	for _, w := range list {
+		fmt.Fprintf(&b, "%s ← %s", w.Pattern, w.Agent)
+		if w.Position > 0 {
+			fmt.Fprintf(&b, " (#%d in line", w.Position)
+			if len(w.Holders) > 0 {
+				fmt.Fprintf(&b, ", held by %s", strings.Join(w.Holders, ", "))
+			}
+			b.WriteString(")")
+		}
+		if w.Reason != "" {
+			fmt.Fprintf(&b, " %q", w.Reason)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Threads renders an agent's recent conversations.
+func Threads(list []core.ThreadSummary) string {
+	if len(list) == 0 {
+		return "No conversations yet."
+	}
+	// Subjects and last lines are peer text: fence them like messages.
+	nonce := randNonce()
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n<<peer-threads %s: one line each>>\n", PeerHeader, nonce)
+	for _, t := range list {
+		fmt.Fprintf(&b, "thread #%d", t.ThreadID)
+		if t.Subject != "" {
+			fmt.Fprintf(&b, " %q", strings.ReplaceAll(oneLine(t.Subject), nonce, ""))
+		}
+		fmt.Fprintf(&b, " · %d msg · last %s\n", t.Count, strings.ReplaceAll(BriefLine(t.Last), nonce, ""))
+	}
+	fmt.Fprintf(&b, "<<end %s threads>>\n(get_thread <id> to read one)", nonce)
+	return b.String()
+}
+
+// Prefs renders an agent's delivery settings, filling in defaults.
+func Prefs(p core.Prefs, defMessages, defChars int, defInject string) string {
+	or := func(v, d string) string {
+		if v == "" {
+			return d + " (default)"
+		}
+		return v
+	}
+	orN := func(v, d int) string {
+		if v == 0 {
+			return fmt.Sprintf("%d (default)", d)
+		}
+		return fmt.Sprint(v)
+	}
+	topics := "none"
+	if len(p.Topics) > 0 {
+		keys := make([]string, 0, len(p.Topics))
+		for k := range p.Topics {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = "#" + k
+			if p.Topics[k] == core.ModeBrief {
+				parts[i] += ":brief"
+			}
+		}
+		topics = strings.Join(parts, ", ")
+	}
+	return fmt.Sprintf("broadcasts %s · inject %s · max_messages %s · max_chars %s · topics %s",
+		or(p.Broadcasts, core.DefaultBroadcasts), or(p.Inject, defInject), orN(p.MaxMessages, defMessages), orN(p.MaxChars, defChars), topics)
+}
+
+// Briefing lists peers for a session start without flooding the context:
+// agents on my branch first, then my project, then the rest, up to max
+// lines, and a one-line count of the others.
+func Briefing(list []core.Agent, me core.Agent, max int) string {
+	rank := func(a core.Agent) int {
+		switch {
+		case a.ProjectPath == me.ProjectPath && a.Branch == me.Branch:
+			return 0
+		case a.ProjectPath == me.ProjectPath:
+			return 1
+		}
+		return 2
+	}
+	var peers []core.Agent
+	for _, a := range list {
+		if a.ID != me.ID {
+			peers = append(peers, a)
+		}
+	}
+	sort.SliceStable(peers, func(i, j int) bool { return rank(peers[i]) < rank(peers[j]) })
+	var b strings.Builder
+	shown := 0
+	states := map[string]int{}
+	for _, a := range peers {
+		if shown >= max {
+			states[a.State]++
+			continue
+		}
+		shown++
+		fmt.Fprintf(&b, "  %s [%s] %s", a.Name, a.Harness, a.State)
+		if a.ProjectPath != me.ProjectPath {
+			fmt.Fprintf(&b, " · %s", a.Project)
+		}
+		if a.Branch != "" && a.Branch != me.Branch {
+			fmt.Fprintf(&b, " @%s", a.Branch)
+		}
+		if a.Activity != "" {
+			act := a.Activity
+			if r := []rune(act); len(r) > 60 {
+				act = string(r[:60]) + "…"
+			}
+			fmt.Fprintf(&b, " · %q", act)
+		}
+		b.WriteString("\n")
+	}
+	if rest := len(peers) - shown; rest > 0 {
+		keys := make([]string, 0, len(states))
+		for k := range states {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = fmt.Sprintf("%d %s", states[k], k)
+		}
+		fmt.Fprintf(&b, "  +%d more (%s): list_agents\n", rest, strings.Join(parts, ", "))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

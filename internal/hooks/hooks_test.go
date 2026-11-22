@@ -128,8 +128,8 @@ func TestClaudeSessionFlow(t *testing.T) {
 	e.as("100", "claude-code", "SessionEnd", nil)
 	var list []core.Agent
 	_ = e.c.Call(context.Background(), "agents", core.AgentFilter{}, &list)
-	if len(list) != 1 {
-		t.Fatalf("ended session should leave: %+v", list)
+	if a := e.agent("100"); a.State != "leaving" {
+		t.Fatalf("ended session should be leaving: %+v", a)
 	}
 }
 

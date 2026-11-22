@@ -257,10 +257,10 @@ func TestOperatorCommandsAgainstALiveAgent(t *testing.T) {
 		t.Fatalf("overview: %d %q", code, out)
 	}
 
-	// SessionEnd takes the agent offline.
+	// SessionEnd marks the agent leaving (offline unless it checks in again soon).
 	cli(t, in(""), "hook", "claude-code", "SessionEnd")
-	if out, _, _ = cli(t, "", "agents"); strings.Contains(out, "claude@proj") {
-		t.Fatalf("agent still online after SessionEnd: %q", out)
+	if out, _, _ = cli(t, "", "agents"); !strings.Contains(out, "claude@proj [claude-code] leaving") {
+		t.Fatalf("agent should be leaving after SessionEnd: %q", out)
 	}
 }
 

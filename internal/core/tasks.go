@@ -307,6 +307,23 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 		if t.Status != before.Status {
 			msg = fmt.Sprintf("%s moved #%d %s → %s", by.Name, t.ID, before.Status, t.Status)
 		}
+		if (t.Status == "done" || t.Status == "cancelled") && t.Status != before.Status {
+			// A finished task lets go of the files its assignee (or whoever
+			// finished it) reserved for it; others' reservations are theirs.
+			res, err := tx.Exec(`DELETE FROM locks WHERE task_id=? AND agent_id IN (?,?,?)`, t.ID, before.AssigneeID, t.AssigneeID, by.ID)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				msg += fmt.Sprintf(" (released %d reservation(s))", n)
+			}
+			if _, err := tx.Exec(`DELETE FROM waiters WHERE task_id=?`, t.ID); err != nil {
+				return err
+			}
+			if err := s.promote(tx); err != nil {
+				return err
+			}
+		}
 		event(tx, now, &by, "task", msg+": "+t.Title)
 		out, err = scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, t.ID))
 		return err
@@ -368,6 +385,25 @@ func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error)
 		return err
 	})
 	return out, err
+}
+
+// taskForReservation checks that me may reserve files for task id, claiming
+// it when it is still free (claimed reports that this call claimed it).
+func (s *Store) taskForReservation(ctx context.Context, me Agent, id int64) (t Task, claimed bool, err error) {
+	t, err = scanTask(s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
+	if err != nil {
+		return Task{}, false, fmt.Errorf("no task #%d", id)
+	}
+	switch {
+	case t.Status == "done" || t.Status == "cancelled":
+		return Task{}, false, fmt.Errorf("task #%d is %s", id, t.Status)
+	case t.Status == "todo":
+		t, err = s.Claim(ctx, me.ID, id)
+		return t, err == nil, err
+	case t.AssigneeID != "" && t.AssigneeID != me.ID:
+		return Task{}, false, fmt.Errorf("task #%d is %s by %s; ask them, or queue for the files with wait=true", id, t.Status, t.Assignee)
+	}
+	return t, false, nil
 }
 
 // ClaimNext claims the most urgent ready task on a board (or returns

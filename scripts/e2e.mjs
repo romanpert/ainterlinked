@@ -102,10 +102,14 @@ try {
   const denied = hook("claude-code", "PreToolUse", { session_id: "sess-A", tool_name: "Edit", tool_input: { file_path: join(PROJECT, "db", "schema.sql") } });
   ok(denied.out?.hookSpecificOutput?.permissionDecision === "deny", "edit of a reserved file is blocked", denied.out?.hookSpecificOutput?.permissionDecisionReason?.slice(0, 70));
 
-  // Stop is held while mail is waiting.
-  await b.tool("send_message", { to: "project", body: "one more thing" });
+  // Stop is held for mail meant for this agent, not for group announcements.
+  const nameA = who.text.match(/You are (\S+)/)[1];
+  await b.tool("send_message", { to: "project", body: "FYI: pushed dev" });
+  const free = hook("claude-code", "Stop", { session_id: "sess-A" });
+  ok(free.out?.decision !== "block", "Stop not held for a project brief");
+  await b.tool("send_message", { to: nameA, body: "one more thing" });
   const stop = hook("claude-code", "Stop", { session_id: "sess-A" });
-  ok(stop.out?.decision === "block" && stop.out.reason.includes("one more thing"), "Stop held with the new message");
+  ok(stop.out?.decision === "block" && stop.out.reason.includes("one more thing"), "Stop held with a direct message");
 
   // HTTP dashboard state.
   const port = 17700 + Math.floor(Math.random() * 200);
@@ -137,7 +141,9 @@ try {
   await a.close();
   await new Promise((r) => setTimeout(r, 300));
   const left = (await b.tool("list_agents")).text;
-  ok(!left.includes("claude@"), "closing the MCP server takes the agent offline");
+  // A closed MCP server may be a restart: the agent is "leaving" and goes
+  // offline only if it doesn't check in again within the grace (30 s).
+  ok(/claude@\S+ \[claude-code\] leaving/.test(left), "closing the MCP server marks the agent leaving", left.split("\n").find((l) => l.includes("claude@")) || "");
   await b.close();
 } catch (e) {
   failures++;

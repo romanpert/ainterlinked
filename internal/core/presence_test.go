@@ -111,7 +111,9 @@ func TestRevivalEventUsesCurrentName(t *testing.T) {
 	s.now = func() time.Time { return now }
 	a := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 1, SessionID: "s1"})
 	s.now = func() time.Time { return now.Add(time.Minute) }
-	b := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 2})                   // takes a's name
+	// Automatic names aren't recycled for a day, so b asks for a's name
+	// explicitly (a hand-over) to force a's revival under another name.
+	b := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 2, Name: a.Name})
 	a2 := reg(t, s, RegisterReq{Harness: "claude-code", Project: "app", AnchorPID: 3, SessionID: "s1"}) // resumed
 	if b.Name != a.Name || a2.Name == a.Name {
 		t.Fatalf("setup: a=%s b=%s a2=%s", a.Name, b.Name, a2.Name)

@@ -57,22 +57,43 @@ Every agent gets these MCP tools:
 | Tool | What it does |
 |---|---|
 | `whoami`, `list_agents` | Who is online: harness, project, branch, state, current activity, delivery tier |
-| `set_status` | Publish `working` / `waiting` / `blocked` / `done` plus a one-line activity, a role or a new name |
-| `send_message` | To a name, `project` (agents in your repo), `project:<name>`, `harness:<name>`, `*`, or a list. Threads with `reply_to`. `urgent` flag |
-| `read_inbox`, `get_thread` | Read mail. Reading marks it read |
+| `set_status` | Publish `working` / `waiting` / `blocked` / `done` plus a one-line activity, a role or a new name. `continue_as` takes over an offline agent's work (see below) |
+| `send_message` | To a name, `branch` / `branch:<name>`, `#topic`, `project` (agents in your repo), `project:<name>`, `harness:<name>`, `*`, or a list. Threads with `reply_to`. `urgent` flag |
+| `read_inbox`, `get_thread` | Read mail. Reading marks it read. `threads=true` lists your recent conversations |
+| `set_delivery` | Each agent decides what peer mail costs its context: broadcasts `full` / `brief` / `off`, topics, when mail is injected, how much per injection |
 | `wait_for_messages` | Block until a message arrives (long-poll). The real-time primitive for any harness |
 | `create_task`, `list_tasks`, `list_boards` | Shared boards, one per project by default, with priorities, labels and dependencies |
 | `claim_task` | Atomic. Only one agent wins, and it respects dependencies. Without an id it claims the most urgent ready task |
 | `update_task` | Move a task through `todo → doing → blocked/review → done`. The creator is told automatically when it's done or blocked |
-| `reserve_files`, `release_files`, `list_reservations` | Leases on paths or globs (`src/api/**`). They expire, and die with the agent |
+| `reserve_files`, `release_files`, `list_reservations` | Leases on paths or globs (`src/api/**`). They expire, and die with the agent. `wait=true` queues behind the holder; `task=<id>` claims a board task and ends the lease when the task is done |
 | `activity_feed` | Joins, status changes, messages, tasks and reservations across the bus |
 
 The hooks are what make this more than a mailbox:
 
 - **Presence without tool calls.** Session start and end, and the current activity (`Edit src/auth.go`, `Bash: go test ./...`), are reported automatically.
 - **Delivery into the model's context.** Unread messages are injected on the next prompt, tool call or stop, so the agent doesn't have to remember to check its mail.
-- **Stop-hold.** When an agent is about to finish and new mail is waiting, the hook keeps it working on the new messages. A cap stops two agents from keeping each other alive forever.
-- **Enforced reservations.** An edit to a file another live agent reserved is refused, with a note on who holds it and how to reach them. Set `enforce = "warn"` to allow the edit and only tell the model.
+- **Stop-hold.** When an agent is about to finish and mail meant for it is waiting (a direct or urgent message), the hook keeps it working on the new messages. Group announcements wait for its next turn. A cap stops two agents from keeping each other alive forever.
+- **Enforced reservations.** An edit to a file another live agent reserved is refused, with a note on who holds it and how to queue for it. Set `enforce = "warn"` to allow the edit and only tell the model.
+
+### Keeping context small
+
+With twenty or thirty sessions in one repo, announcements to everyone used to fill every context. Measured on a day of real traffic (933 messages, 407 of them to a whole project, reaching 8,076 inboxes), the rules below inject 60% fewer characters (5.9 M → 2.35 M) and leave about half as much unread mail waiting.
+
+- **Group mail is a brief.** A message to `project`, `branch`, `*` or `harness:` reaches each agent as one line (subject, or the first 160 characters) with its id. `get_thread <id>` reads it in full. A named recipient, an `urgent` message or a full-mode topic gets the whole body. Put the point in the subject.
+- **Topics and branches.** `set_delivery subscribe=["reload"]` and `send_message to="#reload"` reach only the agents that asked for them. `to="branch"` reaches the agents on your git branch.
+- **Each agent tunes itself.** `set_delivery broadcasts=off|brief|full`, `inject=every_tool|turn|manual`, `max_messages`, `max_chars`. With no arguments it shows the current settings and the project's topics.
+- **Nothing is lost to the budget.** An injection takes full mail first, then briefs, within the agent's limits. What doesn't fit stays unread for the next injection instead of being marked read and dropped. Unread briefs older than 6 hours expire. Direct mail never does.
+- **Short briefings.** A session start lists up to 8 peers (your branch first), counts the rest, and shows the board: your tasks and the next ready ones.
+
+### Hand-over and continuity
+
+- **Names that stick.** Automatic names (`claude@api-3`) are never given to another session within 24 hours, so a message can't reach a stranger by an old name. Rename yourself after your task (`set_status name=ls6-cierre`); your earlier names keep reaching you.
+- **Continue across IDEs, providers and accounts.** A new session runs `set_status continue_as=ls6-cierre` and takes over that offline agent: its name, unread mail, threads (replies to its messages now reach you), assigned tasks, reservations, queue places and delivery settings. It only works for an offline agent in the same checkout (on another machine, the same project) and never for `human`. Every hand-over is logged in the feed.
+- **The queue instead of "tell me when you let go".** `reserve_files wait=true` queues for a held path. The holder is told who waits and why. When they release it, or it expires, or they leave, it passes on first come first served, and the new holder is told. An agent that is idle when its turn comes gets a 10-minute lease, so it can't hold up the line.
+- **The board does the bookkeeping.** `reserve_files task=12` claims task #12 if it's free. Moving the task to `done` releases its files and hands them to the queue.
+- **No flapping.** A session that ends and goes straight on (`/clear`, compaction, a resumed chat, an MCP restart) shows as `leaving` and keeps its name, files and queue places. It only goes offline if it doesn't check in within 30 seconds.
+- **Know who is away.** `send_message` tells you which recipients are between turns and will only read it when their session resumes, so you don't sit waiting on a reply.
+- **Hooks never stall a tool call.** A hook waits at most 2.5 s for the hub's write lock. A missed heartbeat is harmless. Slow hooks are logged with their timings in `~/.interlinked/hook.log`.
 
 You, the human, are on the bus too: `interlinked send codex@api "rebase on main first"` and `interlinked inbox`. Agents can message `human`.
 
@@ -92,7 +113,7 @@ Per-harness details, file locations and caveats are in [docs/harnesses.md](docs/
 
 - **Hub.** One SQLite database in WAL mode (`~/.interlinked/hub.db`) shared by every process on the machine. There is no daemon to keep running. Writes are short transactions, and claims and reservations are atomic.
 - **Identity.** Each harness session starts its own `interlinked mcp` process, so the process lifetime is the agent's presence: it registers, heartbeats and leaves on exit. Hook processes find the same agent by walking up the process tree, skipping shells and launchers, to the harness process that spawned both. A resumed session (same session id) gets its old name and unread mail back.
-- **Names.** `<harness>@<project>`, for example `claude@api` or `codex@api-2`. They are unique among online agents. Rename with `set_status name=reviewer` or start with `interlinked launch codex --name reviewer --role "code review"`.
+- **Names.** `<harness>@<project>`, for example `claude@api` or `codex@api-2`. They are unique among online agents and not recycled for 24 hours. Rename with `set_status name=reviewer` or start with `interlinked launch codex --name reviewer --role "code review"`.
 - **Many machines.** Run `interlinked serve --listen 0.0.0.0:7717 --token <secret>` on one machine. On the others set `hub = "http://<host>:7717"` and `token` in `~/.interlinked/config.toml`. The same tools then work across machines (Tailscale recommended).
 - **Dashboard.** `interlinked serve` opens a live switchboard at http://127.0.0.1:7717 with agents, the board, reservations, messages and activity, and lets you send as `human`.
 
@@ -124,7 +145,7 @@ on_prompt = true          # inject unread mail when the user prompts
 on_tool = true            # inject unread mail after tool calls
 hold_stop = true          # keep an agent working while new mail arrives (capped)
 claude_channel = true     # allow push into idle Claude Code sessions via `interlinked launch claude`
-max_messages = 5
+max_messages = 5          # per injection; each agent can change its own with set_delivery
 max_chars = 4000
 
 [presence]

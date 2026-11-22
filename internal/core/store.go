@@ -17,7 +17,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
+
+func atoi(s string) int {
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -123,6 +134,8 @@ type Options struct {
 	// reports which pids exist; nil means heartbeats alone decide.
 	Machine string
 	Alive   func(pids []int) (map[int]bool, error)
+	// Busy is how long to wait for another writer (0 = 10 s).
+	Busy time.Duration
 }
 
 // Open opens (creating if needed) the hub database at path.
@@ -130,8 +143,13 @@ func Open(path string, opt Options) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
+	busy := opt.Busy
+	if busy <= 0 {
+		busy = 10 * time.Second
+	}
 	dsn := "file:" + filepath.ToSlash(path) +
-		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate"
+		fmt.Sprintf("?_pragma=busy_timeout(%d)", busy.Milliseconds()) +
+		"&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -140,10 +158,18 @@ func Open(path string, opt Options) (*Store, error) {
 	// Hooks open the hub on every call: skip the schema write when it's
 	// already there, so opening is a read and never waits on a writer.
 	var have string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&have); err != nil || have != fmt.Sprint(schemaVersion) {
+	// ">=": a database already upgraded by a newer binary is left alone.
+	// An older binary still running (a long-lived MCP server) resets the
+	// marker to its own version; if the upgrade is already there, leave it,
+	// or the two would rewrite the marker on every open.
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&have); err != nil || (atoi(have) < schemaVersion && !upgraded(db)) {
 		if _, err := db.Exec(schema); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("init schema: %w", err)
+		}
+		if err := migrate(db); err != nil {
+			db.Close()
+			return nil, err
 		}
 		if _, err := db.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES('schema',?)`, fmt.Sprint(schemaVersion)); err != nil {
 			db.Close()
@@ -275,6 +301,9 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		arg int64
 	}{
 		{`DELETE FROM events WHERE ts < ?`, cut},
+		// Briefs nobody read in time are stale news, not mail to keep.
+		// (read_at = now, so they stay in history for the retention window.)
+		{`UPDATE receipts SET read_at=strftime('%s','now')*1000 WHERE read_at=0 AND mode='brief' AND message_id IN (SELECT id FROM messages WHERE created_at < ?)`, s.ms() - BriefTTL.Milliseconds()},
 		{`DELETE FROM locks WHERE expires_at < ?`, s.ms()},
 		{`DELETE FROM receipts WHERE read_at > 0 AND read_at < ?`, cut},
 		{`DELETE FROM messages WHERE created_at < ? AND id NOT IN (SELECT message_id FROM receipts)`, cut},

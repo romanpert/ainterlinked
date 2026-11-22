@@ -90,6 +90,11 @@ type (
 	UnreadResult struct {
 		Total  int `json:"total"`
 		Urgent int `json:"urgent"`
+		Full   int `json:"full"` // delivered in full: direct, urgent or a full-mode topic
+	}
+	ThreadsParam struct {
+		Agent string `json:"agent"`
+		Limit int    `json:"limit"`
 	}
 	NextResult struct {
 		Task *core.Task `json:"task,omitempty"`
@@ -109,15 +114,27 @@ func Methods(s *core.Store) map[string]handler {
 		"leave": op(func(ctx context.Context, p IDParam) (Empty, error) {
 			return Empty{}, s.Leave(ctx, p.ID)
 		}),
+		"depart": op(func(ctx context.Context, p IDParam) (Empty, error) {
+			return Empty{}, s.Depart(ctx, p.ID)
+		}),
 		"agents":  op(s.List),
 		"agent":   op(func(ctx context.Context, p IDParam) (core.Agent, error) { return s.Get(ctx, p.ID) }),
 		"resolve": op(func(ctx context.Context, p RefParam) (core.Agent, error) { return s.Resolve(ctx, p.Ref) }),
 		"send":    op(s.Send),
 		"inbox":   op(s.Inbox),
 		"unread": op(func(ctx context.Context, p AgentParam) (UnreadResult, error) {
-			t, u, err := s.Unread(ctx, p.Agent)
-			return UnreadResult{t, u}, err
+			t, u, f, err := s.UnreadByMode(ctx, p.Agent)
+			return UnreadResult{t, u, f}, err
 		}),
+		"prefs":     op(func(ctx context.Context, p AgentParam) (core.Prefs, error) { return s.GetPrefs(ctx, p.Agent) }),
+		"set_prefs": op(s.SetPrefs),
+		"topics": op(func(ctx context.Context, p ProjectParam) (map[string]int, error) {
+			return s.Topics(ctx, p.ProjectPath)
+		}),
+		"threads": op(func(ctx context.Context, p ThreadsParam) ([]core.ThreadSummary, error) {
+			return s.Threads(ctx, p.Agent, p.Limit)
+		}),
+		"waiters": op(func(ctx context.Context, p ProjectParam) ([]core.Waiter, error) { return s.Waiters(ctx, p.ProjectPath) }),
 		"wait": op(func(ctx context.Context, p WaitParam) ([]core.Message, error) {
 			return s.Wait(ctx, p.Agent, time.Duration(p.Timeout)*time.Second)
 		}),
@@ -249,7 +266,21 @@ func (r *Remote) Close() error { return nil }
 
 // Open returns the client for the configured hub: remote when cfg.Hub is
 // set, otherwise the local database.
-func Open(cfg config.Config) (Client, error) {
+func Open(cfg config.Config) (Client, error) { return OpenWithin(cfg, 0) }
+
+// Depart says goodbye for a session that may come straight back (see
+// core.Depart); a hub too old to know "depart" gets a plain leave.
+func Depart(ctx context.Context, c Client, id string) error {
+	if err := c.Call(ctx, "depart", IDParam{ID: id}, nil); err != nil {
+		return c.Call(ctx, "leave", IDParam{ID: id}, nil)
+	}
+	return nil
+}
+
+// OpenWithin is Open for a caller with a deadline (a hook): it waits at most
+// busy for the database write lock instead of the default 10 s, so under
+// contention it fails fast instead of stalling the agent's tool call.
+func OpenWithin(cfg config.Config, busy time.Duration) (Client, error) {
 	if cfg.Hub != "" {
 		// Long enough for wait() long-polls; per-call contexts bound it.
 		return &Remote{Base: cfg.Hub, Token: cfg.Token, HTTP: &http.Client{Timeout: 35 * time.Minute}}, nil
@@ -258,6 +289,7 @@ func Open(cfg config.Config) (Client, error) {
 		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
 		Machine: cfg.Machine,
 		Alive:   proc.AliveSet,
+		Busy:    busy,
 	})
 	if err != nil {
 		return nil, err

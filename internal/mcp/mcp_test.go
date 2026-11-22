@@ -14,6 +14,7 @@ import (
 
 	"github.com/romanpert/interlinked/internal/config"
 	"github.com/romanpert/interlinked/internal/core"
+	"github.com/romanpert/interlinked/internal/harness"
 	"github.com/romanpert/interlinked/internal/hub"
 )
 
@@ -109,8 +110,8 @@ func TestTwoAgentsTalkOverMCP(t *testing.T) {
 
 	claude := start(t, h, "claude-code", "11", project)
 	tools := claude.call("tools/list", nil)["tools"].([]any)
-	if len(tools) != 16 {
-		t.Fatalf("expected 16 tools, got %d", len(tools))
+	if len(tools) != 17 {
+		t.Fatalf("expected 17 tools, got %d", len(tools))
 	}
 	who, isErr := claude.tool("whoami", nil)
 	if isErr || !strings.Contains(who, "claude@shop") {
@@ -171,6 +172,41 @@ func TestTwoAgentsTalkOverMCP(t *testing.T) {
 		t.Fatalf("conflict expected: %s", r)
 	}
 
+	// Queue for a held file: the holder is told, the file passes on release.
+	q, _ := codex.tool("reserve_files", map[string]any{"paths": []string{"api/checkout.go"}, "wait": true, "reason": "fix totals"})
+	if !strings.Contains(q, "queued") || !strings.Contains(q, "#1 in line") {
+		t.Fatalf("queue: %s", q)
+	}
+	told, _ := claude.tool("read_inbox", nil)
+	if !strings.Contains(told, "fix totals") || !strings.Contains(told, "from interlinked") {
+		t.Fatalf("holder should be told who waits: %s", told)
+	}
+	claude.tool("release_files", nil)
+	mine, _ := codex.tool("list_reservations", nil)
+	if !strings.Contains(mine, "api/checkout.go — codex@shop") {
+		t.Fatalf("file should pass to codex: %s", mine)
+	}
+
+	// Each agent tunes its own delivery; group mail arrives as briefs.
+	set, isErr := codex.tool("set_delivery", map[string]any{"inject": "turn", "subscribe": []string{"reload"}})
+	if isErr || !strings.Contains(set, "inject turn") || !strings.Contains(set, "#reload") {
+		t.Fatalf("set_delivery: %s", set)
+	}
+	if show, _ := claude.tool("set_delivery", nil); !strings.Contains(show, "broadcasts brief (default)") || !strings.Contains(show, "#reload(1)") {
+		t.Fatalf("set_delivery with no args shows settings and topics: %s", show)
+	}
+	sent, _ = claude.tool("send_message", map[string]any{"to": "project", "subject": "core reload at 10:00", "body": strings.Repeat("details ", 200)})
+	if !strings.Contains(sent, "one-line brief to 1") {
+		t.Fatalf("project mail is a brief: %s", sent)
+	}
+	brief, _ := codex.tool("read_inbox", nil)
+	if !strings.Contains(brief, "core reload at 10:00") || strings.Count(brief, "details") > 30 {
+		t.Fatalf("brief should be one short line: %s", brief)
+	}
+	if th, _ := codex.tool("read_inbox", map[string]any{"threads": true}); !strings.Contains(th, "thread #") {
+		t.Fatalf("threads: %s", th)
+	}
+
 	// Unknown tool → error result, not a crash.
 	if _, isErr := claude.tool("nope", nil); !isErr {
 		t.Fatal("unknown tool should be an error")
@@ -184,9 +220,26 @@ func TestTwoAgentsTalkOverMCP(t *testing.T) {
 		t.Fatal("server did not exit on EOF")
 	}
 	list, _ = codex.tool("list_agents", nil)
-	if strings.Contains(list, "claude@shop") {
-		t.Fatalf("claude should be gone: %s", list)
+	if !strings.Contains(list, "claude@shop [claude-code] leaving") {
+		t.Fatalf("claude should be leaving: %s", list)
 	}
 	codex.in.Close()
 	<-codex.done
+}
+
+// Harnesses that pre-approve tools by name must know every tool.
+func TestToolNamesMatchHarnessAllowList(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, n := range harness.ToolNames {
+		allowed[n] = true
+	}
+	for _, d := range toolDefs() {
+		if !allowed[d.Name] {
+			t.Errorf("tool %q is missing from harness.ToolNames", d.Name)
+		}
+		delete(allowed, d.Name)
+	}
+	for n := range allowed {
+		t.Errorf("harness.ToolNames lists %q, which is not a tool", n)
+	}
 }

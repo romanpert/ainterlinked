@@ -21,6 +21,7 @@ type Lock struct {
 	AgentID     string `json:"agent_id"`
 	Agent       string `json:"agent"`
 	Reason      string `json:"reason,omitempty"`
+	TaskID      int64  `json:"task_id,omitempty"` // released when that task is done or cancelled
 	CreatedAt   int64  `json:"created_at"`
 	ExpiresAt   int64  `json:"expires_at"`
 }
@@ -33,19 +34,27 @@ type LockReq struct {
 	Reason string   `json:"reason,omitempty"`
 	TTL    int      `json:"ttl_minutes,omitempty"`
 	Force  bool     `json:"force,omitempty"` // take it even if another agent holds an overlapping lock
+	// Wait queues for paths held by others: they're reserved for this agent
+	// (and it is told) as soon as the holder lets go.
+	Wait bool `json:"wait,omitempty"`
+	// Task links the reservation to a board task: the task is claimed if it
+	// is free, and the reservation ends when the task is done or cancelled.
+	Task int64 `json:"task,omitempty"`
 }
 
-// LockResult reports what was reserved and what conflicted.
+// LockResult reports what was reserved, what conflicted and what was queued.
 type LockResult struct {
-	Granted   []Lock `json:"granted"`
-	Conflicts []Lock `json:"conflicts,omitempty"`
+	Granted   []Lock   `json:"granted"`
+	Conflicts []Lock   `json:"conflicts,omitempty"`
+	Queued    []Waiter `json:"queued,omitempty"`
+	Task      *Task    `json:"task,omitempty"`
 }
 
-const lockCols = `id,project_path,pattern,agent_id,agent_name,reason,created_at,expires_at`
+const lockColsL = `l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.task_id,l.created_at,l.expires_at`
 
 func scanLock(r scanner) (Lock, error) {
 	var l Lock
-	err := r.Scan(&l.ID, &l.ProjectPath, &l.Pattern, &l.AgentID, &l.Agent, &l.Reason, &l.CreatedAt, &l.ExpiresAt)
+	err := r.Scan(&l.ID, &l.ProjectPath, &l.Pattern, &l.AgentID, &l.Agent, &l.Reason, &l.TaskID, &l.CreatedAt, &l.ExpiresAt)
 	return l, err
 }
 
@@ -163,7 +172,7 @@ func (s *Store) liveLocks(ctx context.Context, q interface {
 }, projectPath string) ([]Lock, error) {
 	// "online" is decided by reap (heartbeat or live harness process); callers
 	// reap first so a dead agent's reservations don't count.
-	rows, err := q.QueryContext(ctx, `SELECT l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.created_at,l.expires_at
+	rows, err := q.QueryContext(ctx, `SELECT `+lockColsL+`
 		FROM locks l JOIN agents a ON a.id=l.agent_id
 		WHERE l.project_path=? AND l.expires_at>? AND a.online=1`,
 		projectPath, s.ms())
@@ -199,11 +208,27 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 		ttl = 30 * time.Minute
 	}
 	var res LockResult
+	claimed := false
+	if r.Task > 0 {
+		t, now, err := s.taskForReservation(ctx, me, r.Task)
+		if err != nil {
+			return LockResult{}, err
+		}
+		claimed = now
+		res.Task = &t
+		if strings.TrimSpace(r.Reason) == "" {
+			r.Reason = fmt.Sprintf("task #%d: %s", t.ID, t.Title)
+		}
+	}
 	err = s.tx(ctx, func(tx *sql.Tx) error {
-		if err := s.reap(tx); err != nil {
+		if err := s.settle(tx); err != nil {
 			return err
 		}
 		live, err := s.liveLocks(ctx, tx, me.ProjectPath)
+		if err != nil {
+			return err
+		}
+		line, err := s.queued(tx, me.ProjectPath, me.ID)
 		if err != nil {
 			return err
 		}
@@ -213,26 +238,42 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			if err != nil {
 				return err
 			}
-			var clash []Lock
+			var clash, ahead []Lock
 			for _, l := range live {
 				if l.AgentID != me.ID && overlap(l.Pattern, pat) {
 					clash = append(clash, l)
 				}
 			}
-			if len(clash) > 0 && !r.Force {
-				res.Conflicts = append(res.Conflicts, clash...)
+			// Agents already queued for these files go first: a plain
+			// reservation must not jump the line.
+			for _, w := range line {
+				if overlap(w.Pattern, pat) {
+					ahead = append(ahead, Lock{ProjectPath: me.ProjectPath, Pattern: w.Pattern, AgentID: w.AgentID, Agent: w.Agent,
+						Reason: "queued before you", ExpiresAt: w.ExpiresAt})
+				}
+			}
+			if len(clash)+len(ahead) > 0 && !r.Force {
+				res.Conflicts = append(append(res.Conflicts, clash...), ahead...)
+				if r.Wait {
+					w, err := s.enqueue(tx, now, me, pat, r.Reason, r.Task, ttl, clash)
+					if err != nil {
+						return err
+					}
+					res.Queued = append(res.Queued, w)
+				}
 				continue
 			}
 			// Refresh our own identical reservation instead of duplicating it.
 			_, _ = tx.Exec(`DELETE FROM locks WHERE agent_id=? AND project_path=? AND pattern=?`, me.ID, me.ProjectPath, pat)
-			out, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,created_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
-				me.ProjectPath, pat, me.ID, me.Name, oneLine(r.Reason, 200), now, now+ttl.Milliseconds())
+			_, _ = tx.Exec(`DELETE FROM waiters WHERE agent_id=? AND project_path=? AND pattern=?`, me.ID, me.ProjectPath, pat)
+			out, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,task_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
+				me.ProjectPath, pat, me.ID, me.Name, oneLine(r.Reason, 200), r.Task, now, now+ttl.Milliseconds())
 			if err != nil {
 				return err
 			}
 			id, _ := out.LastInsertId()
 			res.Granted = append(res.Granted, Lock{ID: id, ProjectPath: me.ProjectPath, Pattern: pat, AgentID: me.ID, Agent: me.Name,
-				Reason: r.Reason, CreatedAt: now, ExpiresAt: now + ttl.Milliseconds()})
+				Reason: oneLine(r.Reason, 200), TaskID: r.Task, CreatedAt: now, ExpiresAt: now + ttl.Milliseconds()})
 		}
 		if len(res.Granted) > 0 {
 			pats := make([]string, len(res.Granted))
@@ -240,6 +281,15 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 				pats[i] = g.Pattern
 			}
 			event(tx, now, &me, "lock", fmt.Sprintf("%s reserved %s", me.Name, strings.Join(pats, ", ")))
+		}
+		// A task claimed for files we got none of (and don't wait for) goes
+		// back to the board.
+		if claimed && len(res.Granted) == 0 && len(res.Queued) == 0 {
+			if _, err := tx.Exec(`UPDATE tasks SET status='todo', assignee_id='', assignee='', updated_at=? WHERE id=? AND assignee_id=? AND status='doing'`,
+				now, r.Task, me.ID); err != nil {
+				return err
+			}
+			res.Task.Status, res.Task.AssigneeID, res.Task.Assignee = "todo", "", ""
 		}
 		return nil
 	})
@@ -276,20 +326,29 @@ func (s *Store) Release(ctx context.Context, agent string, paths []string) (int,
 		if n > 0 {
 			event(tx, s.ms(), &me, "lock", fmt.Sprintf("%s released %d reservation(s)", me.Name, n))
 		}
-		return nil
+		// Releasing also leaves the queue for those paths.
+		if len(paths) == 0 {
+			_, _ = tx.Exec(`DELETE FROM waiters WHERE agent_id=?`, me.ID)
+		}
+		for _, p := range paths {
+			if pat, err := NormPattern(me.ProjectPath, p); err == nil {
+				_, _ = tx.Exec(`DELETE FROM waiters WHERE agent_id=? AND pattern=?`, me.ID, pat)
+			}
+		}
+		return s.promote(tx)
 	})
 	return int(n), err
 }
 
 // Locks lists live reservations in a project ("" = every project).
 func (s *Store) Locks(ctx context.Context, projectPath string) ([]Lock, error) {
-	if err := s.tx(ctx, s.reap); err != nil {
+	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err
 	}
 	if projectPath != "" {
 		return s.liveLocks(ctx, s.db, projectPath)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.created_at,l.expires_at
+	rows, err := s.db.QueryContext(ctx, `SELECT `+lockColsL+`
 		FROM locks l JOIN agents a ON a.id=l.agent_id WHERE l.expires_at>? AND a.online=1 ORDER BY l.project_path, l.pattern`, s.ms())
 	if err != nil {
 		return nil, err
@@ -324,7 +383,7 @@ func (s *Store) CheckFile(ctx context.Context, agent, file string) (*Lock, error
 		// A path we can't evaluate must not slip past a reservation: fail closed.
 		return &Lock{Pattern: file, Agent: "interlinked", Reason: "refused: " + err.Error()}, nil
 	}
-	if err := s.tx(ctx, s.reap); err != nil {
+	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err
 	}
 	live, err := s.liveLocks(ctx, s.db, me.ProjectPath)

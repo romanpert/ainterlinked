@@ -31,6 +31,9 @@ type Agent struct {
 	StartedAt   int64  `json:"started_at"`
 	LastSeen    int64  `json:"last_seen"`
 	Unread      int    `json:"unread,omitempty"`
+	// Aka are earlier names of this agent (renames, adopted identities);
+	// messages to them still reach it.
+	Aka []string `json:"aka,omitempty"`
 }
 
 // ErrSuperseded means the agent went offline and its session has since
@@ -56,16 +59,18 @@ type RegisterReq struct {
 	Delivery    string `json:"delivery"` // push | turn | pull
 }
 
-const agentCols = `id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,state,activity,via,delivery,online,started_at,last_seen`
+const agentCols = `id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,state,activity,via,delivery,online,started_at,last_seen,aka`
 
 type scanner interface{ Scan(...any) error }
 
 func scanAgent(r scanner) (Agent, error) {
 	var a Agent
 	var online int
+	var aka string
 	err := r.Scan(&a.ID, &a.Name, &a.Harness, &a.Model, &a.Role, &a.Machine, &a.Project, &a.ProjectPath,
-		&a.Branch, &a.AnchorPID, &a.SessionID, &a.State, &a.Activity, &a.Via, &a.Delivery, &online, &a.StartedAt, &a.LastSeen)
+		&a.Branch, &a.AnchorPID, &a.SessionID, &a.State, &a.Activity, &a.Via, &a.Delivery, &online, &a.StartedAt, &a.LastSeen, &aka)
 	a.Online = online == 1
+	a.Aka = splitList(aka)
 	return a, err
 }
 
@@ -94,7 +99,11 @@ func (s *Store) reap(tx *sql.Tx) error {
 		if _, err := tx.Exec(`UPDATE agents SET online=0, state='offline' WHERE id=?`, gone[i].ID); err != nil {
 			return err
 		}
-		event(tx, s.ms(), &gone[i], "left", gone[i].Name+" went offline (no heartbeat)")
+		why := " went offline (no heartbeat)"
+		if gone[i].State == stateLeaving {
+			why = " left"
+		}
+		event(tx, s.ms(), &gone[i], "left", gone[i].Name+why)
 	}
 	return nil
 }
@@ -109,7 +118,7 @@ func (s *Store) withoutLiveAnchors(stale []Agent) []Agent {
 	}
 	now := s.ms()
 	anchored := func(a Agent) bool {
-		return a.Machine == s.machine && a.AnchorPID > 0 && now-a.LastSeen < anchorGrace.Milliseconds()
+		return a.State != stateLeaving && a.Machine == s.machine && a.AnchorPID > 0 && now-a.LastSeen < anchorGrace.Milliseconds()
 	}
 	var pids []int
 	for _, a := range stale {
@@ -188,28 +197,70 @@ func (s *Store) nameFree(tx *sql.Tx, name, exceptID string) bool {
 
 // reservedNames can't be taken by agents: messages "from human" must really
 // come from the operator.
-var reservedNames = map[string]bool{"human": true, "user": true, "system": true, "operator": true, "admin": true, "owner": true}
+var reservedNames = map[string]bool{"human": true, "user": true, "system": true, "operator": true, "admin": true, "owner": true, SystemSender: true}
+
+// nameReuseWindow keeps an automatic name from going to a new session while
+// the session that had it may still be addressed by it: peers that saw
+// "claude@api-3" an hour ago must not reach a stranger by that name.
+const nameReuseWindow = 24 * time.Hour
+
+// nameRecent reports whether another agent used name (as its name or an
+// earlier one) recently, or still has unread mail under it.
+func (s *Store) nameRecent(tx *sql.Tx, name, exceptID string) bool {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM agents WHERE id<>? AND (lower(name)=lower(?) OR instr(','||lower(aka)||',', ','||lower(?)||',')>0)
+		AND (last_seen>? OR id IN (SELECT agent_id FROM receipts WHERE read_at=0))`,
+		exceptID, name, name, s.ms()-nameReuseWindow.Milliseconds()).Scan(&n)
+	return err != nil || n > 0 // can't tell: treat as taken
+}
 
 func (s *Store) pickName(tx *sql.Tx, want, harness, project, exceptID string) string {
 	base := sanitizeName(want)
 	if reservedNames[base] && harness != "human" {
 		base = ""
 	}
-	if base == "" {
+	auto := base == ""
+	if auto {
 		base = sanitizeName(shortHarness(harness) + "@" + project)
 	}
 	if base == "" {
 		base = "agent"
 	}
-	if s.nameFree(tx, base, exceptID) {
+	// A chosen name (a task alias) may follow on from an offline agent that
+	// had it: that's a hand-over. An automatic one must be new.
+	free := func(n string) bool { return s.nameFree(tx, n, exceptID) && (!auto || !s.nameRecent(tx, n, exceptID)) }
+	if free(base) {
 		return base
 	}
-	for i := 2; ; i++ {
+	for i := 2; i < 1000; i++ {
 		n := fmt.Sprintf("%s-%d", base, i)
-		if s.nameFree(tx, n, exceptID) {
+		if free(n) {
 			return n
 		}
 	}
+	return clip(base, 40) + "-" + newID() // unique without asking the database again
+}
+
+// IsAutoName reports whether name is one the hub generated (harness@project
+// or harness@project-N) rather than one the agent chose.
+func IsAutoName(name, harness, project string) bool {
+	base := sanitizeName(shortHarness(harness) + "@" + project)
+	if base == "" || !strings.HasPrefix(name, base) {
+		return false
+	}
+	rest := strings.TrimPrefix(name, base)
+	if rest == "" {
+		return true
+	}
+	if !strings.HasPrefix(rest, "-") || len(rest) < 2 {
+		return false
+	}
+	for _, r := range rest[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeName(n string) string {
@@ -289,8 +340,13 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 				name = s.pickName(tx, "", r.Harness, r.Project, a.ID)
 			}
 			state := a.State
-			if revived {
+			if revived || state == stateLeaving {
 				state = "idle"
+			}
+			if name != a.Name {
+				if err := setAka(tx, a, name); err != nil {
+					return err
+				}
 			}
 			_, err = tx.Exec(`UPDATE agents SET name=?, model=COALESCE(NULLIF(?,''),model), role=COALESCE(NULLIF(?,''),role),
 				machine=?, project=COALESCE(NULLIF(?,''),project), project_path=COALESCE(NULLIF(?,''),project_path),
@@ -322,6 +378,8 @@ type StatusReq struct {
 	Model    string `json:"model,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Quiet    bool   `json:"quiet,omitempty"` // don't log to the feed
+	// ContinueAs takes over an offline agent's identity first (see ContinueAs).
+	ContinueAs string `json:"continue_as,omitempty"`
 }
 
 // SetStatus records a heartbeat and optional state/activity changes.
@@ -329,6 +387,11 @@ func (s *Store) SetStatus(ctx context.Context, r StatusReq) (Agent, error) {
 	r.Role, r.Model, r.Activity = oneLine(r.Role, 80), oneLine(r.Model, 80), oneLine(r.Activity, 200)
 	if r.State != "" && !validState(r.State) {
 		return Agent{}, fmt.Errorf("state must be one of %s", strings.Join(States, ", "))
+	}
+	if r.ContinueAs != "" {
+		if _, err := s.ContinueAs(ctx, r.ID, r.ContinueAs); err != nil {
+			return Agent{}, err
+		}
 	}
 	var out Agent
 	err := s.tx(ctx, func(tx *sql.Tx) error {
@@ -356,8 +419,13 @@ func (s *Store) SetStatus(ctx context.Context, r StatusReq) (Agent, error) {
 		state := a.State
 		if r.State != "" {
 			state = r.State
-		} else if !a.Online {
-			state = "idle"
+		} else if !a.Online || a.State == stateLeaving {
+			state = "idle" // a heartbeat after a departure: it stayed
+		}
+		if name != a.Name {
+			if err := setAka(tx, a, name); err != nil {
+				return err
+			}
 		}
 		_, err = tx.Exec(`UPDATE agents SET name=?, state=?, activity=CASE WHEN ?<>'' THEN ? ELSE activity END,
 			role=COALESCE(NULLIF(?,''),role), model=COALESCE(NULLIF(?,''),model), online=1, last_seen=? WHERE id=?`,
@@ -387,7 +455,29 @@ func validState(st string) bool {
 	return false
 }
 
-// Leave marks an agent offline (session ended or MCP process exiting).
+// stateLeaving marks an agent whose session said it ended but may come
+// straight back (/clear, compaction, a resumed chat, an MCP restart).
+const stateLeaving = "leaving"
+
+// departGrace is how long a departing agent has to check in again before
+// it goes offline. Seen in real use: sessions "left" and were back 2–8 s
+// later, and each flap voided their queue places and reservations meanwhile.
+const departGrace = 30 * time.Second
+
+// Depart is a session's own goodbye: the agent stays online (keeping its
+// reservations, queue places and name) for departGrace, and goes offline
+// then unless it has checked in again. Its process may still be running,
+// so the anchor check doesn't hold it.
+func (s *Store) Depart(ctx context.Context, id string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		// Backdate last_seen so the ordinary reaper takes it after the grace.
+		seen := s.ms() - s.stale.Milliseconds() + departGrace.Milliseconds()
+		_, err := tx.Exec(`UPDATE agents SET state=?, last_seen=min(last_seen, ?) WHERE id=? AND online=1`, stateLeaving, seen, id)
+		return err
+	})
+}
+
+// Leave marks an agent offline at once.
 func (s *Store) Leave(ctx context.Context, id string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		a, err := scanAgent(tx.QueryRow(`SELECT `+agentCols+` FROM agents WHERE id=?`, id))
@@ -413,7 +503,7 @@ type AgentFilter struct {
 
 // List returns agents, online first, with their unread counts.
 func (s *Store) List(ctx context.Context, f AgentFilter) ([]Agent, error) {
-	if err := s.tx(ctx, s.reap); err != nil {
+	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err
 	}
 	q := `SELECT ` + agentCols + ` FROM agents WHERE 1=1`
@@ -449,8 +539,10 @@ func (s *Store) List(ctx context.Context, f AgentFilter) ([]Agent, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	stale := s.ms() - BriefTTL.Milliseconds()
 	for i := range out {
-		_ = s.db.QueryRowContext(ctx, `SELECT count(*) FROM receipts WHERE agent_id=? AND read_at=0`, out[i].ID).Scan(&out[i].Unread)
+		_ = s.db.QueryRowContext(ctx, `SELECT count(*) FROM receipts r JOIN messages m ON m.id=r.message_id
+			WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, out[i].ID, stale).Scan(&out[i].Unread)
 	}
 	return out, nil
 }
@@ -471,14 +563,24 @@ func (s *Store) Resolve(ctx context.Context, ref string) (Agent, error) {
 	if ref == "" {
 		return Agent{}, errors.New("empty agent reference")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT `+agentCols+` FROM agents WHERE id=? OR lower(name)=lower(?)
-		ORDER BY online DESC, last_seen DESC LIMIT 1`, ref, ref)
-	a, err := scanAgent(row)
-	if err == nil {
-		return a, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return a, err
+	// Current names first, then earlier names of online agents (a renamed or
+	// adopted identity), then the most recent offline holder (its mail is
+	// kept for it).
+	for _, q := range []string{
+		`SELECT ` + agentCols + ` FROM agents WHERE id=? OR (online=1 AND lower(name)=lower(?)) LIMIT 1`,
+		// Only a name nobody holds any more: an agent that once wore a name
+		// must not intercept the mail of the agent that owns it now.
+		`SELECT ` + agentCols + ` FROM agents WHERE online=1 AND instr(','||lower(aka)||',', ','||lower(?)||',')>0
+			AND NOT EXISTS (SELECT 1 FROM agents h WHERE lower(h.name)=lower(?)) ORDER BY last_seen DESC LIMIT 1`,
+		`SELECT ` + agentCols + ` FROM agents WHERE lower(name)=lower(?) AND ?<>'' ORDER BY last_seen DESC LIMIT 1`,
+	} {
+		a, err := scanAgent(s.db.QueryRowContext(ctx, q, ref, ref))
+		if err == nil {
+			return a, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return a, err
+		}
 	}
 	// Unique prefix among online agents.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+agentCols+` FROM agents WHERE online=1 AND lower(name) LIKE lower(?) || '%'`, ref)

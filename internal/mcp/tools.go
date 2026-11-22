@@ -48,12 +48,19 @@ func toolDefs() []tool {
 			obj(prop{"project": str("Only this project name"), "harness": str("Only this harness, e.g. codex"), "include_offline": boo("Include agents seen in the last 7 days")}), ro()},
 		{"set_status", "Tell peers what you're doing. Call when you start/finish work or get blocked.",
 			obj(prop{"state": prop{"type": "string", "enum": core.States}, "activity": str("Short description of the current work"),
-				"role": str("Your role in the team, e.g. reviewer"), "name": str("Rename yourself (unique among online agents)")}), nil},
-		{"send_message", "Message other agents. to: agent name, 'project' (your project's agents), 'project:<name>', 'harness:<name>', '*' (everyone), or a comma list. Omit to when replying.",
-			obj(prop{"to": str("Recipient(s)"), "body": str("Message text (max 16 KB; reference files by path)"), "subject": str("Optional short subject"),
-				"reply_to": num("Message id you're answering (keeps the thread)"), "urgent": boo("Ask recipients to look now")}, "body"), nil},
-		{"read_inbox", "Read your unread messages (marks them read). all=true shows recent history instead.",
-			obj(prop{"all": boo("Include already-read messages"), "limit": num("Max messages, default 20")}), nil},
+				"role": str("Your role in the team, e.g. reviewer"), "name": str("Rename yourself, ideally after your task (old names keep reaching you)"),
+				"continue_as": str("Continue an offline agent of this checkout (after a restart or a switch of IDE/provider/account): take its name, unread mail, threads, tasks and reservations")}), nil},
+		{"send_message", "Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as one-line briefs unless urgent: put the point in the subject/first line. Omit to when replying.",
+			obj(prop{"to": str("Recipient(s)"), "body": str("Message text (max 16 KB; reference files by path)"), "subject": str("Optional short subject (shown in briefs)"),
+				"reply_to": num("Message id you're answering (keeps the thread)"), "urgent": boo("Everyone gets it in full and now; use rarely")}, "body"), nil},
+		{"read_inbox", "Read your unread messages (marks them read). all=true shows recent history; threads=true lists your recent conversations to pick one up again.",
+			obj(prop{"all": boo("Include already-read messages"), "limit": num("Max messages, default 20"), "threads": boo("List your recent threads instead")}), nil},
+		{"set_delivery", "Tune what peer mail costs your context. No arguments shows your settings and the project's topics.",
+			obj(prop{"broadcasts": prop{"type": "string", "enum": []string{core.ModeFull, core.ModeBrief, core.ModeOff}, "description": "Group messages: full, brief (one line, default) or off (urgent still arrives)"},
+				"inject":       prop{"type": "string", "enum": []string{core.InjectEveryTool, core.InjectTurn, core.InjectManual}, "description": "When mail enters your context: after tool calls, only at prompt/turn end, or never (you call read_inbox)"},
+				"max_messages": num("Messages per injection"), "max_chars": num("Characters per injection (500-40000)"),
+				"subscribe": strs("Topics to receive (send_message to='#topic'); 'name:brief' for one-line delivery"), "unsubscribe": strs("Topics to drop"),
+				"reset": boo("Back to defaults (topics kept)")}), nil},
 		{"wait_for_messages", "Block until a message arrives or the timeout passes, then return it. Use to wait for a peer's answer or for work.",
 			obj(prop{"timeout_seconds": num("Default 50, max 600")}), nil},
 		{"get_thread", "Show a whole conversation thread by any message id in it.", obj(prop{"message_id": num("Message id")}, "message_id"), ro()},
@@ -70,10 +77,12 @@ func toolDefs() []tool {
 		{"update_task", "Change a task: status (todo, doing, blocked, review, done, cancelled), result, title, body, priority or assignee ('me', a name, or '' to unassign). The creator is told when it's done or blocked.",
 			obj(prop{"id": num("Task id"), "status": prop{"type": "string", "enum": core.TaskStatuses}, "result": str("Outcome / notes (when done or blocked)"),
 				"title": str("New title"), "body": str("New body"), "priority": num("0-3"), "assignee": str("Agent name, 'me' or ''")}, "id"), nil},
-		{"reserve_files", "Reserve files/folders before editing so other agents don't touch them (globs ok: src/api/**, *.md; trailing / = folder). Enforced on harnesses with edit hooks.",
-			obj(prop{"paths": strs("Paths relative to the project root"), "reason": str("Why, e.g. task #3"), "ttl_minutes": num("Default 30")}, "paths"), nil},
-		{"release_files", "Release your file reservations (all of them if paths is omitted).", obj(prop{"paths": strs("Patterns to release")}), nil},
-		{"list_reservations", "Show active file reservations in your project.", obj(prop{"all_projects": boo("Every project")}), ro()},
+		{"reserve_files", "Reserve files/folders before editing so other agents don't touch them (globs ok: src/api/**, *.md; trailing / = folder). Enforced on harnesses with edit hooks. Keep it short and narrow; release when done.",
+			obj(prop{"paths": strs("Paths relative to the project root"), "reason": str("Why (defaults to the task title)"), "ttl_minutes": num("Default 30"),
+				"wait": boo("If held, queue: it becomes yours, and you're told, when the holder lets go"),
+				"task": num("Board task this is for: claims it if free; the reservation ends when it's done")}, "paths"), nil},
+		{"release_files", "Release your file reservations (all of them if paths is omitted) and your queue places for them; the next in line gets them.", obj(prop{"paths": strs("Patterns to release")}), nil},
+		{"list_reservations", "Show active file reservations and the queue in your project.", obj(prop{"all_projects": boo("Every project")}), ro()},
 		{"activity_feed", "Recent bus activity: joins, status changes, messages, tasks, reservations.",
 			obj(prop{"limit": num("Default 30"), "project": str("Only this project")}), ro()},
 	}
@@ -130,8 +139,44 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			fmt.Fprintf(&b, "@%s", self.Branch)
 		}
 		fmt.Fprintf(&b, ". Delivery: %s. Unread: %d.\n", deliveryHelp(self.Delivery), u.Total)
+		if len(self.Aka) > 0 {
+			fmt.Fprintf(&b, "Also reached as: %s.\n", strings.Join(self.Aka, ", "))
+		}
+		var p core.Prefs
+		_ = c.Call(ctx, "prefs", hub.AgentParam{Agent: me}, &p)
+		b.WriteString("Your delivery: " + s.prefsLine(p) + " (set_delivery to change)\n")
 		b.WriteString(render.Agents(peers, me))
 		return b.String(), nil
+	case "set_delivery":
+		r := core.PrefsReq{Agent: me}
+		get("broadcasts", &r.Broadcasts)
+		get("inject", &r.Inject)
+		get("max_messages", &r.MaxMessages)
+		get("max_chars", &r.MaxChars)
+		get("subscribe", &r.Subscribe)
+		get("unsubscribe", &r.Unsubscribe)
+		get("reset", &r.Reset)
+		var p core.Prefs
+		changed := len(a) > 0
+		if changed {
+			if err := c.Call(ctx, "set_prefs", r, &p); err != nil {
+				return "", err
+			}
+		} else if err := c.Call(ctx, "prefs", hub.AgentParam{Agent: me}, &p); err != nil {
+			return "", err
+		}
+		var self core.Agent
+		_ = c.Call(ctx, "agent", hub.IDParam{ID: me}, &self)
+		var topics map[string]int
+		_ = c.Call(ctx, "topics", hub.ProjectParam{ProjectPath: self.ProjectPath}, &topics)
+		out := s.prefsLine(p)
+		if changed {
+			out = "ok: " + out
+		}
+		if len(topics) > 0 {
+			out += "\nTopics in this project (subscribers): " + core.SortedTopics(topics)
+		}
+		return out, nil
 	case "list_agents":
 		var f core.AgentFilter
 		get("project", &f.Project)
@@ -148,6 +193,7 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		get("activity", &r.Activity)
 		get("role", &r.Role)
 		get("name", &r.Name)
+		get("continue_as", &r.ContinueAs)
 		var out core.Agent
 		if err := c.Call(ctx, "status", r, &out); err != nil {
 			return "", err
@@ -155,7 +201,18 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		s.mu.Lock()
 		s.me = out
 		s.mu.Unlock()
-		return fmt.Sprintf("ok: %s is %s%s", out.Name, out.State, prefixed(" — ", out.Activity)), nil
+		msg := fmt.Sprintf("ok: %s is %s%s", out.Name, out.State, prefixed(" — ", out.Activity))
+		if r.ContinueAs != "" {
+			var u hub.UnreadResult
+			_ = c.Call(ctx, "unread", hub.AgentParam{Agent: me}, &u)
+			var mine []core.Task
+			_ = c.Call(ctx, "tasks", core.TaskFilter{Agent: me, Mine: true, Open: true}, &mine)
+			msg += fmt.Sprintf("\nContinuing %s: %d unread message(s), %d open task(s) of yours. read_inbox threads=true lists your conversations.", r.ContinueAs, u.Total, len(mine))
+			if len(mine) > 0 {
+				msg += "\n" + render.Tasks(mine)
+			}
+		}
+		return msg, nil
 	case "send_message":
 		r := core.SendReq{From: me}
 		get("to", &r.To)
@@ -167,8 +224,19 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		if err := c.Call(ctx, "send", r, &m); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("sent #%d to %s", m.ID, strings.Join(m.Delivered, ", ")), nil
+		return sentLine(m), nil
 	case "read_inbox":
+		var threads bool
+		get("threads", &threads)
+		if threads {
+			p := hub.ThreadsParam{Agent: me}
+			get("limit", &p.Limit)
+			var list []core.ThreadSummary
+			if err := c.Call(ctx, "threads", p, &list); err != nil {
+				return "", err
+			}
+			return render.Threads(list), nil
+		}
 		r := core.InboxReq{Agent: me}
 		get("all", &r.All)
 		get("limit", &r.Limit)
@@ -289,19 +357,30 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		get("paths", &r.Paths)
 		get("reason", &r.Reason)
 		get("ttl_minutes", &r.TTL)
+		get("wait", &r.Wait)
+		get("task", &r.Task)
 		var res core.LockResult
 		if err := c.Call(ctx, "reserve", r, &res); err != nil {
 			return "", err
 		}
 		var b strings.Builder
+		if res.Task != nil {
+			b.WriteString("for " + render.Tasks([]core.Task{*res.Task}) + "\n")
+		}
 		if len(res.Granted) > 0 {
 			b.WriteString("reserved:\n" + render.Locks(res.Granted))
 		}
-		if len(res.Conflicts) > 0 {
+		switch {
+		case len(res.Queued) > 0:
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString("NOT reserved — held by others (message them or pick other work):\n" + render.Locks(res.Conflicts))
+			b.WriteString("held by others, so you're queued (you'll be told when it's yours; the holder was told you wait):\n" + render.Waiters(res.Queued))
+		case len(res.Conflicts) > 0:
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("NOT reserved — held by others (wait=true queues you; or pick other work):\n" + render.Locks(res.Conflicts))
 		}
 		return b.String(), nil
 	case "release_files":
@@ -327,7 +406,12 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		if err := c.Call(ctx, "locks", p, &list); err != nil {
 			return "", err
 		}
-		return render.Locks(list), nil
+		out := render.Locks(list)
+		var queue []core.Waiter
+		if err := c.Call(ctx, "waiters", p, &queue); err == nil && len(queue) > 0 {
+			out += "\n" + render.Waiters(queue)
+		}
+		return out, nil
 	case "activity_feed":
 		r := core.FeedReq{Limit: 30}
 		get("limit", &r.Limit)
@@ -339,6 +423,36 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		return render.Feed(list), nil
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
+}
+
+func (s *Server) prefsLine(p core.Prefs) string {
+	inject := core.InjectEveryTool
+	if !s.cfg.Delivery.OnTool {
+		inject = core.InjectTurn
+	}
+	return render.Prefs(p, s.cfg.Delivery.MaxMessages, s.cfg.Delivery.MaxChars, inject)
+}
+
+// sentLine tells the sender who got what, without listing twenty names.
+func sentLine(m core.Message) string {
+	names := func(list []string) string {
+		if len(list) > 6 {
+			return fmt.Sprintf("%s and %d more", strings.Join(list[:5], ", "), len(list)-5)
+		}
+		return strings.Join(list, ", ")
+	}
+	var parts []string
+	if len(m.Delivered) > 0 {
+		parts = append(parts, "in full to "+names(m.Delivered))
+	}
+	if len(m.Briefed) > 0 {
+		parts = append(parts, fmt.Sprintf("as a one-line brief to %d agent(s) (%s)", len(m.Briefed), names(m.Briefed)))
+	}
+	line := fmt.Sprintf("sent #%d %s", m.ID, strings.Join(parts, "; "))
+	if len(m.Away) > 0 {
+		line += fmt.Sprintf(". Not active now: %s; they read it when their session resumes, so don't block on a reply (or pick a working agent).", names(m.Away))
+	}
+	return line
 }
 
 func prefixed(p, s string) string {

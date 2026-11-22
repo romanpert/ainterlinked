@@ -97,12 +97,12 @@ func TestSendBroadcastThreadAndRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(m.Delivered, ",") != b.Name {
-		t.Fatalf("project broadcast should reach only %s, got %v", b.Name, m.Delivered)
+	if strings.Join(m.Briefed, ",") != b.Name || len(m.Delivered) != 0 {
+		t.Fatalf("project broadcast should reach only %s, as a brief: %+v", b.Name, m)
 	}
 	all, _ := s.Send(ctx, SendReq{From: a.ID, To: "*", Body: "hello all"})
-	if len(all.Delivered) != 2 {
-		t.Fatalf("* should reach 2 agents, got %v", all.Delivered)
+	if len(all.Briefed) != 2 {
+		t.Fatalf("* should reach 2 agents, got %v", all.Briefed)
 	}
 	if _, err := s.Send(ctx, SendReq{From: a.ID, To: a.Name, Body: "me"}); err == nil {
 		t.Fatal("messaging yourself should fail")

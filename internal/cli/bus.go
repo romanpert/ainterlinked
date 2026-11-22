@@ -126,7 +126,10 @@ func cmdSend(ctx context.Context, args []string) error {
 	if err := c.Call(ctx, "send", core.SendReq{From: me, To: to, Body: body, Subject: *subject, Urgent: *urgent, ReplyTo: *reply}, &m); err != nil {
 		return err
 	}
-	fmt.Printf("sent #%d to %s\n", m.ID, strings.Join(m.Delivered, ", "))
+	fmt.Printf("sent #%d to %s\n", m.ID, strings.Join(append(append([]string{}, m.Delivered...), m.Briefed...), ", "))
+	if len(m.Away) > 0 {
+		fmt.Printf("not active now (they read it when their session resumes): %s\n", strings.Join(m.Away, ", "))
+	}
 	return nil
 }
 
