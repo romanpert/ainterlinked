@@ -113,19 +113,31 @@ type shellWord struct {
 // or separator; # starts a comment. Redirections (<, >, 2>&1, <<EOF) are
 // dropped together with their target, which is a file name, not a program.
 func shellSegments(cmd string) [][]shellWord {
+	segs, _ := shellParse(cmd)
+	return segs
+}
+
+// shellParse is shellSegments that also returns the targets of output
+// redirections (> and >>), the files the command line writes that way.
+func shellParse(cmd string) ([][]shellWord, []string) {
 	var (
-		segs     [][]shellWord
-		words    []shellWord
-		word     strings.Builder
-		quote    rune
-		inTok    bool
-		quoted   bool
-		skipNext bool // the next word is a redirection target
+		segs      [][]shellWord
+		words     []shellWord
+		word      strings.Builder
+		quote     rune
+		inTok     bool
+		quoted    bool
+		skipNext  bool // the next word is a redirection target
+		outTarget bool // … of an output redirection
+		writes    []string
 	)
 	endWord := func() {
 		if inTok {
 			if skipNext {
 				skipNext = false
+				if outTarget {
+					writes = append(writes, word.String())
+				}
 			} else {
 				words = append(words, shellWord{text: word.String(), quoted: quoted})
 			}
@@ -185,10 +197,12 @@ func shellSegments(cmd string) [][]shellWord {
 				inTok = false
 			}
 			endWord()
+			out, dup := r == '>', false
 			for i+1 < len(rs) && (rs[i+1] == '<' || rs[i+1] == '>' || rs[i+1] == '&') {
+				dup = dup || rs[i+1] == '&'
 				i++ // >>, <<, >&, <&
 			}
-			skipNext = true
+			skipNext, outTarget = true, out && !dup // ">&2" duplicates a descriptor
 		case r == ';' || r == '&' || r == '|' || r == '\n' || r == '(' || r == ')':
 			endSeg()
 		case r == ' ' || r == '\t' || r == '\r':
@@ -199,7 +213,7 @@ func shellSegments(cmd string) [][]shellWord {
 		}
 	}
 	endSeg()
-	return segs
+	return segs, writes
 }
 
 // promptScan bounds the work done on a prompt: only its start is shown.

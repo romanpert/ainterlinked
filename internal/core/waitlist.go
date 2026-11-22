@@ -59,9 +59,12 @@ func (s *Store) enqueue(tx *sql.Tx, now int64, a Agent, pattern, reason string, 
 	if err != nil {
 		return w, err
 	}
-	for _, q := range ahead {
-		if q.ID <= w.ID && overlap(q.Pattern, pattern) {
+	for _, q := range ahead { // in queue order: count up to our own place
+		if overlap(q.Pattern, pattern) {
 			w.Position++
+		}
+		if q.ID == w.ID {
+			break
 		}
 	}
 	told := map[string]bool{}
@@ -86,11 +89,20 @@ func (s *Store) enqueue(tx *sql.Tx, now int64, a Agent, pattern, reason string, 
 	return w, nil
 }
 
-// queued lists live queue places in a project, oldest first, except those
+// ownerRank and queueOrder order a queue by the owner's valuation, then by
+// arrival. The owner is the only one whose priorities count: a waiter goes
+// by the priority of a task the owner (a human) created and that is assigned
+// to that very waiter; anyone else by the default priority. So an agent
+// can't jump the queue by linking an urgent task that isn't its own work.
+const ownerRank = ` LEFT JOIN tasks t ON t.id=w.task_id AND w.task_id>0 AND t.assignee_id=w.agent_id
+		AND t.created_by_id IN (SELECT id FROM agents WHERE harness='human')`
+const queueOrder = ` ORDER BY COALESCE(t.priority, 2), w.id`
+
+// queued lists live queue places in a project in queue order, except those
 // of agent exceptID.
 func (s *Store) queued(tx *sql.Tx, projectPath, exceptID string) ([]Waiter, error) {
-	rows, err := tx.Query(`SELECT w.id,w.pattern,w.agent_id,a.name,w.reason,w.expires_at FROM waiters w JOIN agents a ON a.id=w.agent_id
-		WHERE w.project_path=? AND w.expires_at>? AND a.online=1 AND w.agent_id<>? ORDER BY w.id`, projectPath, s.ms(), exceptID)
+	rows, err := tx.Query(`SELECT w.id,w.pattern,w.agent_id,a.name,w.reason,w.expires_at FROM waiters w JOIN agents a ON a.id=w.agent_id`+ownerRank+`
+		WHERE w.project_path=? AND w.expires_at>? AND a.online=1 AND w.agent_id<>?`+queueOrder, projectPath, s.ms(), exceptID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,24 +130,29 @@ func recentlyTold(tx *sql.Tx, now int64, holderID, waiter, pattern string) bool 
 	return err != nil || n > 0
 }
 
-// settle brings presence and the queue up to date: reap silent agents, then
-// hand released or expired reservations to whoever waits for them.
+// settle brings presence and the queue up to date: reap silent agents, end
+// the reservations of agents idle too long, then hand released or expired
+// reservations to whoever waits for them.
 func (s *Store) settle(tx *sql.Tx) error {
 	if err := s.reap(tx); err != nil {
+		return err
+	}
+	if err := s.lapse(tx); err != nil {
 		return err
 	}
 	return s.promote(tx)
 }
 
-// promote grants queued reservations that no longer collide, first come
-// first served: a later waiter never jumps an earlier one on the same files.
+// promote grants queued reservations that no longer collide, in queue order
+// (the owner's priority, then first come): a waiter never jumps one ahead
+// of it on the same files.
 func (s *Store) promote(tx *sql.Tx) error {
 	now := s.ms()
 	if _, err := tx.Exec(`DELETE FROM waiters WHERE expires_at<=? OR agent_id NOT IN (SELECT id FROM agents WHERE online=1)`, now); err != nil {
 		return err
 	}
 	rows, err := tx.Query(`SELECT w.id,w.project_path,w.pattern,w.agent_id,a.name,a.state,w.reason,w.task_id,w.ttl_ms
-		FROM waiters w JOIN agents a ON a.id=w.agent_id ORDER BY w.id`)
+		FROM waiters w JOIN agents a ON a.id=w.agent_id` + ownerRank + queueOrder)
 	if err != nil {
 		return err
 	}
@@ -212,13 +229,13 @@ func (s *Store) promote(tx *sql.Tx) error {
 // Waiters lists the queue of a project ("" = every project).
 func (s *Store) Waiters(ctx context.Context, projectPath string) ([]Waiter, error) {
 	q := `SELECT w.id,w.project_path,w.pattern,w.agent_id,a.name,w.reason,w.task_id,w.created_at,w.expires_at
-		FROM waiters w JOIN agents a ON a.id=w.agent_id WHERE w.expires_at>? AND a.online=1`
+		FROM waiters w JOIN agents a ON a.id=w.agent_id` + ownerRank + ` WHERE w.expires_at>? AND a.online=1`
 	args := []any{s.ms()}
 	if projectPath != "" {
 		q += ` AND w.project_path=?`
 		args = append(args, projectPath)
 	}
-	rows, err := s.db.QueryContext(ctx, q+` ORDER BY w.id`, args...)
+	rows, err := s.db.QueryContext(ctx, q+queueOrder, args...)
 	if err != nil {
 		return nil, err
 	}

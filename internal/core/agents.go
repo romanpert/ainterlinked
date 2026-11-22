@@ -21,19 +21,27 @@ type Agent struct {
 	Project     string `json:"project"`
 	ProjectPath string `json:"project_path"`
 	Branch      string `json:"branch,omitempty"`
-	AnchorPID   int    `json:"anchor_pid,omitempty"`
-	SessionID   string `json:"session_id,omitempty"`
-	State       string `json:"state"`
-	Activity    string `json:"activity,omitempty"`
-	Via         string `json:"via"`
-	Delivery    string `json:"delivery"`
-	Online      bool   `json:"online"`
-	StartedAt   int64  `json:"started_at"`
-	LastSeen    int64  `json:"last_seen"`
-	Unread      int    `json:"unread,omitempty"`
+	// AnchorPID and SessionID pick the agent a registration resumes, which
+	// hands out its key (keys.go): they stay inside the hub and are never
+	// serialized, so listing agents doesn't tell anyone how to become one.
+	AnchorPID int    `json:"-"`
+	SessionID string `json:"-"`
+	State     string `json:"state"`
+	Activity  string `json:"activity,omitempty"`
+	Via       string `json:"via"`
+	Delivery  string `json:"delivery"`
+	Online    bool   `json:"online"`
+	StartedAt int64  `json:"started_at"`
+	LastSeen  int64  `json:"last_seen"`
+	Unread    int    `json:"unread,omitempty"`
 	// Aka are earlier names of this agent (renames, adopted identities);
 	// messages to them still reach it.
 	Aka []string `json:"aka,omitempty"`
+	// StateSince is when it entered its current state (ms).
+	StateSince int64 `json:"state_since,omitempty"`
+	// Key is set only in Register's answer: the session's proof that it is
+	// this agent, carried by every call that acts as it (keys.go). Never shown.
+	Key string `json:"key,omitempty"`
 }
 
 // ErrSuperseded means the agent went offline and its session has since
@@ -59,7 +67,7 @@ type RegisterReq struct {
 	Delivery    string `json:"delivery"` // push | turn | pull
 }
 
-const agentCols = `id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,state,activity,via,delivery,online,started_at,last_seen,aka`
+const agentCols = `id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,state,activity,via,delivery,online,started_at,last_seen,aka,state_since`
 
 type scanner interface{ Scan(...any) error }
 
@@ -68,7 +76,7 @@ func scanAgent(r scanner) (Agent, error) {
 	var online int
 	var aka string
 	err := r.Scan(&a.ID, &a.Name, &a.Harness, &a.Model, &a.Role, &a.Machine, &a.Project, &a.ProjectPath,
-		&a.Branch, &a.AnchorPID, &a.SessionID, &a.State, &a.Activity, &a.Via, &a.Delivery, &online, &a.StartedAt, &a.LastSeen, &aka)
+		&a.Branch, &a.AnchorPID, &a.SessionID, &a.State, &a.Activity, &a.Via, &a.Delivery, &online, &a.StartedAt, &a.LastSeen, &aka, &a.StateSince)
 	a.Online = online == 1
 	a.Aka = splitList(aka)
 	return a, err
@@ -214,6 +222,7 @@ func (s *Store) nameRecent(tx *sql.Tx, name, exceptID string) bool {
 	return err != nil || n > 0 // can't tell: treat as taken
 }
 
+// pickName chooses a free name for agent exceptID.
 func (s *Store) pickName(tx *sql.Tx, want, harness, project, exceptID string) string {
 	base := sanitizeName(want)
 	if reservedNames[base] && harness != "human" {
@@ -228,7 +237,12 @@ func (s *Store) pickName(tx *sql.Tx, want, harness, project, exceptID string) st
 	}
 	// A chosen name (a task alias) may follow on from an offline agent that
 	// had it: that's a hand-over. An automatic one must be new.
-	free := func(n string) bool { return s.nameFree(tx, n, exceptID) && (!auto || !s.nameRecent(tx, n, exceptID)) }
+	free := func(n string) bool {
+		if !s.nameFree(tx, n, exceptID) {
+			return false
+		}
+		return !auto || !s.nameRecent(tx, n, exceptID)
+	}
 	if free(base) {
 		return base
 	}
@@ -302,8 +316,12 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 		// Rejected, not clipped: a clipped path would no longer match the real one.
 		return Agent{}, errors.New("project path too long")
 	}
+	secret, err := s.hubSecret()
+	if err != nil {
+		return Agent{}, err
+	}
 	var out Agent
-	err := s.tx(ctx, func(tx *sql.Tx) error {
+	err = s.tx(ctx, func(tx *sql.Tx) error {
 		if err := s.reap(tx); err != nil {
 			return err
 		}
@@ -321,9 +339,9 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 		case errors.Is(err, sql.ErrNoRows):
 			a = Agent{ID: newID(), Harness: r.Harness, State: "idle", StartedAt: now}
 			a.Name = s.pickName(tx, r.Name, r.Harness, r.Project, a.ID)
-			_, err = tx.Exec(`INSERT INTO agents(id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,ukey,online,state,via,delivery,started_at,last_seen)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,'idle',?,?,?,?)`,
-				a.ID, a.Name, r.Harness, r.Model, r.Role, r.Machine, r.Project, r.ProjectPath, r.Branch, r.AnchorPID, r.SessionID, key, r.Via, r.Delivery, now, now)
+			_, err = tx.Exec(`INSERT INTO agents(id,name,harness,model,role,machine,project,project_path,branch,anchor_pid,session_id,ukey,online,state,via,delivery,started_at,last_seen,state_since)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,'idle',?,?,?,?,?)`,
+				a.ID, a.Name, r.Harness, r.Model, r.Role, r.Machine, r.Project, r.ProjectPath, r.Branch, r.AnchorPID, r.SessionID, key, r.Via, r.Delivery, now, now, now)
 			if err != nil {
 				return err
 			}
@@ -351,9 +369,10 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 			_, err = tx.Exec(`UPDATE agents SET name=?, model=COALESCE(NULLIF(?,''),model), role=COALESCE(NULLIF(?,''),role),
 				machine=?, project=COALESCE(NULLIF(?,''),project), project_path=COALESCE(NULLIF(?,''),project_path),
 				branch=COALESCE(NULLIF(?,''),branch), anchor_pid=CASE WHEN ?>0 THEN ? ELSE anchor_pid END,
-				session_id=COALESCE(NULLIF(?,''),session_id), ukey=?, online=1, state=?, via=?, delivery=?, last_seen=? WHERE id=?`,
+				session_id=COALESCE(NULLIF(?,''),session_id), ukey=?, online=1, state_since=CASE WHEN state<>? THEN ? ELSE state_since END, state=?,
+				via=?, delivery=?, last_seen=? WHERE id=?`,
 				name, r.Model, r.Role, r.Machine, r.Project, r.ProjectPath, r.Branch, r.AnchorPID, r.AnchorPID,
-				r.SessionID, key, state, mergeVia(a.Via, r.Via), bestDelivery(a.Delivery, r.Delivery), now, a.ID)
+				r.SessionID, key, state, now, state, mergeVia(a.Via, r.Via), bestDelivery(a.Delivery, r.Delivery), now, a.ID)
 			if err != nil {
 				return err
 			}
@@ -363,11 +382,21 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 				event(tx, now, &back, "joined", name+" is back online")
 			}
 		}
+		ak, err := issueKey(tx, secret, a.ID)
+		if err != nil {
+			return err
+		}
 		out, err = scanAgent(tx.QueryRow(`SELECT `+agentCols+` FROM agents WHERE id=?`, a.ID))
+		out.Key = ak
 		return err
 	})
 	return out, err
 }
+
+// ClaimsHuman reports whether a registration claims to be the operator.
+// Only the CLI and the dashboard register the human (hub.Local.Human); the
+// hub's "register" method refuses this claim from anyone else.
+func ClaimsHuman(r RegisterReq) bool { return strings.EqualFold(sanitizeReg(r).Harness, "human") }
 
 // StatusReq updates presence. Empty fields are left unchanged.
 type StatusReq struct {
@@ -427,9 +456,9 @@ func (s *Store) SetStatus(ctx context.Context, r StatusReq) (Agent, error) {
 				return err
 			}
 		}
-		_, err = tx.Exec(`UPDATE agents SET name=?, state=?, activity=CASE WHEN ?<>'' THEN ? ELSE activity END,
+		_, err = tx.Exec(`UPDATE agents SET name=?, state_since=CASE WHEN state<>? THEN ? ELSE state_since END, state=?, activity=CASE WHEN ?<>'' THEN ? ELSE activity END,
 			role=COALESCE(NULLIF(?,''),role), model=COALESCE(NULLIF(?,''),model), online=1, last_seen=? WHERE id=?`,
-			name, state, r.Activity, oneLine(r.Activity, 200), r.Role, r.Model, now, a.ID)
+			name, state, now, state, r.Activity, oneLine(r.Activity, 200), r.Role, r.Model, now, a.ID)
 		if err != nil {
 			return err
 		}
@@ -472,7 +501,7 @@ func (s *Store) Depart(ctx context.Context, id string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		// Backdate last_seen so the ordinary reaper takes it after the grace.
 		seen := s.ms() - s.stale.Milliseconds() + departGrace.Milliseconds()
-		_, err := tx.Exec(`UPDATE agents SET state=?, last_seen=min(last_seen, ?) WHERE id=? AND online=1`, stateLeaving, seen, id)
+		_, err := tx.Exec(`UPDATE agents SET state=?, state_since=?, last_seen=min(last_seen, ?) WHERE id=? AND online=1`, stateLeaving, s.ms(), seen, id)
 		return err
 	})
 }

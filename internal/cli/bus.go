@@ -33,16 +33,12 @@ func human(ctx context.Context, c hub.Client, cfg config.Config) (string, error)
 }
 
 func overview(ctx context.Context) error {
-	c, cfg, err := openHub()
+	c, _, err := openHub()
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	where := tilde(config.DBPath())
-	if cfg.Hub != "" {
-		where = cfg.Hub
-	}
-	fmt.Printf("interlinked %s · hub %s\n\n", Version, where)
+	fmt.Printf("interlinked %s · hub %s\n\n", Version, tilde(config.DBPath()))
 	var agents []core.Agent
 	if err := c.Call(ctx, "agents", core.AgentFilter{}, &agents); err != nil {
 		return err
@@ -349,13 +345,9 @@ func cmdFeed(ctx context.Context, args []string) error {
 func cmdServe(ctx context.Context, args []string) error {
 	cfg := loadConfig()
 	fs := newFlags("serve")
-	listen := fs.String("listen", cfg.Server.Listen, "address to listen on")
-	token := fs.String("token", cfg.Token, "require this bearer token (mandatory off loopback)")
+	listen := fs.String("listen", cfg.Server.Listen, "loopback address to serve the dashboard on")
 	if _, err := parse(fs, args); err != nil {
 		return err
-	}
-	if cfg.Hub != "" {
-		return fmt.Errorf("this machine is configured as a client of %s; serve runs on the hub machine", cfg.Hub)
 	}
 	client, err := hub.Open(cfg)
 	if err != nil {
@@ -363,7 +355,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	}
 	defer client.Close()
 	local := client.(*hub.Local)
-	srv := &web.Server{Hub: local, Token: *token, Machine: cfg.Machine, Version: Version, Scan: func() []web.HarnessStatus {
+	srv := &web.Server{Hub: local, Machine: cfg.Machine, Version: Version, Scan: func() []web.HarnessStatus {
 		e, cur := env(), loadConfig()
 		var out []web.HarnessStatus
 		for _, h := range harness.All() {
@@ -373,15 +365,10 @@ func cmdServe(ctx context.Context, args []string) error {
 		}
 		return out
 	}}
-	url := "http://" + *listen
-	if strings.HasPrefix(*listen, ":") || strings.HasPrefix(*listen, "0.0.0.0:") {
-		url = "http://<this-machine>" + (*listen)[strings.LastIndex(*listen, ":"):]
+	if !web.IsLoopback(*listen) {
+		return fmt.Errorf("serve listens on this machine only (e.g. 127.0.0.1:7717), not %s", *listen)
 	}
-	fmt.Printf("interlinked dashboard: %s\n", url)
-	if *token != "" {
-		fmt.Printf("Open the dashboard as %s/#token=<token> (the token is kept out of the URL afterwards)\n", url)
-		fmt.Printf("Other machines join with: INTERLINKED_HUB=%s INTERLINKED_TOKEN=<token> (or hub/token in config.toml)\n", url)
-	}
+	fmt.Printf("interlinked dashboard: http://%s\n", *listen)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -430,11 +417,10 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	if err == nil {
 		err = c.Call(ctx, "agents", core.AgentFilter{}, &n)
 	}
-	where := tilde(config.DBPath())
-	if cfg.Hub != "" {
-		where = cfg.Hub
+	check("hub", err, fmt.Sprintf("%s, %d agent(s) online, round trip %s", tilde(config.DBPath()), len(n), time.Since(start).Round(time.Millisecond)))
+	if cfg.OldHub != "" {
+		check("config", fmt.Errorf("hub = %q in %s is ignored: this machine uses its own hub (the next save drops it)", cfg.OldHub, tilde(config.Path())), "")
 	}
-	check("hub", err, fmt.Sprintf("%s, %d agent(s) online, round trip %s", where, len(n), time.Since(start).Round(time.Millisecond)))
 	_ = me
 
 	// Hook latency: a hook must be fast because it runs on every tool call.

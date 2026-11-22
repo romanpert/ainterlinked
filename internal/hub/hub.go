@@ -1,18 +1,13 @@
-// Package hub exposes the core operations through one method table, so the
-// same calls work against the local SQLite hub or a remote `interlinked
-// serve` over HTTP. MCP tools, hooks, the CLI and the web dashboard all go
-// through a Client.
+// Package hub exposes the core operations through one method table. MCP
+// tools, hooks, the CLI and the web dashboard all go through a Client on
+// this machine's hub.
 package hub
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/romanpert/ainterlinked/internal/config"
@@ -74,6 +69,13 @@ type (
 	ReleaseParam struct {
 		Agent string   `json:"agent"`
 		Paths []string `json:"paths"`
+		// To hands the reservations to that agent instead (it must be
+		// queued for them): a cession, not a release.
+		To string `json:"to,omitempty"`
+	}
+	FactsParam struct {
+		Viewer string   `json:"viewer"`
+		Names  []string `json:"names"`
 	}
 	ProjectParam struct {
 		ProjectPath string `json:"project_path"`
@@ -90,7 +92,8 @@ type (
 	UnreadResult struct {
 		Total  int `json:"total"`
 		Urgent int `json:"urgent"`
-		Full   int `json:"full"` // delivered in full: direct, urgent or a full-mode topic
+		Full   int `json:"full"`   // delivered in full: named, or a full-mode group/topic
+		Direct int `json:"direct"` // addressed to the agent by name or id: may hold a turn
 	}
 	ThreadsParam struct {
 		Agent string `json:"agent"`
@@ -109,8 +112,13 @@ type (
 // Methods builds the dispatch table over a store.
 func Methods(s *core.Store) map[string]handler {
 	return map[string]handler{
-		"register": op(s.Register),
-		"status":   op(s.SetStatus),
+		"register": op(func(ctx context.Context, r core.RegisterReq) (core.Agent, error) {
+			if core.ClaimsHuman(r) {
+				return core.Agent{}, errHuman // the operator registers through Local.Human
+			}
+			return s.Register(ctx, r)
+		}),
+		"status": op(s.SetStatus),
 		"leave": op(func(ctx context.Context, p IDParam) (Empty, error) {
 			return Empty{}, s.Leave(ctx, p.ID)
 		}),
@@ -123,8 +131,8 @@ func Methods(s *core.Store) map[string]handler {
 		"send":    op(s.Send),
 		"inbox":   op(s.Inbox),
 		"unread": op(func(ctx context.Context, p AgentParam) (UnreadResult, error) {
-			t, u, f, err := s.UnreadByMode(ctx, p.Agent)
-			return UnreadResult{t, u, f}, err
+			t, u, f, d, err := s.UnreadByMode(ctx, p.Agent)
+			return UnreadResult{t, u, f, d}, err
 		}),
 		"prefs":     op(func(ctx context.Context, p AgentParam) (core.Prefs, error) { return s.GetPrefs(ctx, p.Agent) }),
 		"set_prefs": op(s.SetPrefs),
@@ -144,6 +152,11 @@ func Methods(s *core.Store) map[string]handler {
 		"tasks":       op(s.ListTasks),
 		"task_update": op(s.UpdateTask),
 		"task_claim":  op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.Claim(ctx, p.Agent, p.ID) }),
+		"task_want":   op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.WantTask(ctx, p.Agent, p.ID) }),
+		"trespass":    op(s.RecordTrespass),
+		"facts": op(func(ctx context.Context, p FactsParam) (map[string]core.Facts, error) {
+			return s.AgentFacts(ctx, p.Viewer, p.Names)
+		}),
 		"task_next": op(func(ctx context.Context, p NextParam) (NextResult, error) {
 			t, ok, err := s.ClaimNext(ctx, p.Agent, p.Board, p.Label)
 			if !ok {
@@ -154,11 +167,16 @@ func Methods(s *core.Store) map[string]handler {
 		"boards":  op(func(ctx context.Context, _ Empty) ([]core.Board, error) { return s.Boards(ctx) }),
 		"reserve": op(s.Reserve),
 		"release": op(func(ctx context.Context, p ReleaseParam) (ReleaseResult, error) {
+			if p.To != "" {
+				n, err := s.Cede(ctx, p.Agent, p.To, p.Paths)
+				return ReleaseResult{n}, err
+			}
 			n, err := s.Release(ctx, p.Agent, p.Paths)
 			return ReleaseResult{n}, err
 		}),
 		"locks":      op(func(ctx context.Context, p ProjectParam) ([]core.Lock, error) { return s.Locks(ctx, p.ProjectPath) }),
 		"check_file": op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.CheckFile(ctx, p.Agent, p.File) }),
+		"touch_file": op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.TouchFile(ctx, p.Agent, p.File) }),
 		"feed":       op(s.Feed),
 		"note": op(func(ctx context.Context, p NoteParam) (Empty, error) {
 			return Empty{}, s.Note(ctx, p.Agent, p.Kind, p.Summary)
@@ -170,29 +188,57 @@ func Methods(s *core.Store) map[string]handler {
 type Local struct {
 	Store   *core.Store
 	methods map[string]handler
+
+	mu   sync.Mutex
+	keys map[string]string // agent id → key, for the agents registered through this Local
 }
 
 // NewLocal wraps a store.
-func NewLocal(s *core.Store) *Local { return &Local{Store: s, methods: Methods(s)} }
+func NewLocal(s *core.Store) *Local {
+	return &Local{Store: s, methods: Methods(s), keys: map[string]string{}}
+}
 
-// Dispatch runs a method with raw JSON params (used by the HTTP server too).
+// Dispatch runs a method with raw JSON params; a method that acts as an
+// agent needs that agent's key in params.key (keys.go).
 func (l *Local) Dispatch(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+	return l.run(ctx, method, raw, keyParam(raw))
+}
+
+// run is the one place keys are checked.
+func (l *Local) run(ctx context.Context, method string, raw json.RawMessage, key string) (any, error) {
 	h, ok := l.methods[method]
 	if !ok {
 		return nil, fmt.Errorf("unknown method %q", method)
 	}
+	actor, acts, err := actorOf(method, raw)
+	if err != nil {
+		return nil, err
+	}
+	if acts {
+		if err := l.Store.Authorize(ctx, actor, key); err != nil {
+			return nil, err
+		}
+	}
 	return h(ctx, raw)
 }
 
-// Call implements Client.
+// Call implements Client, carrying the key of the agent the call acts as
+// when this Local registered it.
 func (l *Local) Call(ctx context.Context, method string, params, out any) error {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
-	res, err := l.Dispatch(ctx, method, raw)
+	var key string
+	if actor, acts, _ := actorOf(method, raw); acts { // run refuses malformed params
+		key = l.key(actor)
+	}
+	res, err := l.run(ctx, method, raw, key)
 	if err != nil {
 		return err
+	}
+	if a, ok := res.(core.Agent); ok && method == "register" {
+		l.remember(a)
 	}
 	if out == nil {
 		return nil
@@ -207,65 +253,13 @@ func (l *Local) Call(ctx context.Context, method string, params, out any) error 
 // Close closes the store.
 func (l *Local) Close() error { return l.Store.Close() }
 
-// Request/Response are the HTTP wire format of /rpc.
-type Request struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
-}
+// Response is the JSON envelope of the dashboard's API.
 type Response struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
 }
 
-// Remote calls a hub served by `interlinked serve`.
-type Remote struct {
-	Base  string
-	Token string
-	HTTP  *http.Client
-}
-
-// Call implements Client.
-func (r *Remote) Call(ctx context.Context, method string, params, out any) error {
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
-	body, _ := json.Marshal(Request{Method: method, Params: raw})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(r.Base, "/")+"/rpc", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if r.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+r.Token)
-	}
-	resp, err := r.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("hub %s unreachable: %w", r.Base, err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil {
-		return err
-	}
-	var rr Response
-	if err := json.Unmarshal(data, &rr); err != nil {
-		return fmt.Errorf("hub %s: HTTP %d: %s", r.Base, resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	if rr.Error != "" {
-		return errors.New(rr.Error)
-	}
-	if out == nil || len(rr.Result) == 0 {
-		return nil
-	}
-	return json.Unmarshal(rr.Result, out)
-}
-
-// Close implements Client.
-func (r *Remote) Close() error { return nil }
-
-// Open returns the client for the configured hub: remote when cfg.Hub is
-// set, otherwise the local database.
+// Open returns the client for this machine's hub (its local database).
 func Open(cfg config.Config) (Client, error) { return OpenWithin(cfg, 0) }
 
 // Depart says goodbye for a session that may come straight back (see
@@ -281,10 +275,6 @@ func Depart(ctx context.Context, c Client, id string) error {
 // busy for the database write lock instead of the default 10 s, so under
 // contention it fails fast instead of stalling the agent's tool call.
 func OpenWithin(cfg config.Config, busy time.Duration) (Client, error) {
-	if cfg.Hub != "" {
-		// Long enough for wait() long-polls; per-call contexts bound it.
-		return &Remote{Base: cfg.Hub, Token: cfg.Token, HTTP: &http.Client{Timeout: 35 * time.Minute}}, nil
-	}
 	st, err := core.Open(config.DBPath(), core.Options{
 		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
 		Machine: cfg.Machine,

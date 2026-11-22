@@ -110,8 +110,8 @@ func TestTwoAgentsTalkOverMCP(t *testing.T) {
 
 	claude := start(t, h, "claude-code", "11", project)
 	tools := claude.call("tools/list", nil)["tools"].([]any)
-	if len(tools) != 17 {
-		t.Fatalf("expected 17 tools, got %d", len(tools))
+	if len(tools) != 18 {
+		t.Fatalf("expected 18 tools, got %d", len(tools))
 	}
 	who, isErr := claude.tool("whoami", nil)
 	if isErr || !strings.Contains(who, "claude@shop") {

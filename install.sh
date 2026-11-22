@@ -29,7 +29,8 @@ if [ -z "$want" ] || [ "$want" != "$got" ]; then echo "checksum mismatch for $as
 
 mkdir -p "$BIN_DIR"
 install -m 0755 "$tmp/interlinked" "$BIN_DIR/interlinked"
-echo "Installed $BIN_DIR/interlinked"
+ln -sf interlinked "$BIN_DIR/ainterlinked" # the project's name; same program
+echo "Installed $BIN_DIR/interlinked (also as ainterlinked)"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Note: add $BIN_DIR to your PATH (e.g. in ~/.profile)." ;; esac
 
 if [ "${1:-}" = "--no-wire" ]; then exit 0; fi

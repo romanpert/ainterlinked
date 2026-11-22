@@ -9,7 +9,8 @@ import (
 // schemaV2 adds what the hub learned from real multi-agent use: per-agent
 // delivery preferences and topic subscriptions, a wait queue for reserved
 // files, how each receipt is delivered (full or one-line brief), previous
-// names of an agent, and reservations linked to a task.
+// names of an agent, reservations linked to a task, and each sender's
+// broadcast budget.
 const schemaV2 = `
 CREATE TABLE IF NOT EXISTS prefs(
   agent_id TEXT PRIMARY KEY,
@@ -37,6 +38,16 @@ CREATE TABLE IF NOT EXISTS waiters(
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS waiters_project ON waiters(project_path);
+CREATE TABLE IF NOT EXISTS task_wants(
+  task_id INTEGER NOT NULL,
+  agent_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(task_id, agent_id)
+);
+CREATE TABLE IF NOT EXISTS broadcast_budget(
+  agent_id TEXT PRIMARY KEY,
+  full_at INTEGER NOT NULL
+);
 `
 
 // addedColumns are applied with ALTER TABLE when missing, so a database made
@@ -46,11 +57,20 @@ var addedColumns = []struct{ table, column, ddl string }{
 	{"receipts", "mode", `ALTER TABLE receipts ADD COLUMN mode TEXT NOT NULL DEFAULT 'full'`},
 	{"agents", "aka", `ALTER TABLE agents ADD COLUMN aka TEXT NOT NULL DEFAULT ''`},
 	{"locks", "task_id", `ALTER TABLE locks ADD COLUMN task_id INTEGER NOT NULL DEFAULT 0`},
+	// v3: when the agent entered its current state (idle reservations lapse).
+	{"agents", "state_since", `ALTER TABLE agents ADD COLUMN state_since INTEGER NOT NULL DEFAULT 0`},
+	// v4: last edit inside an explicit reservation (wide leases lapse unused).
+	{"locks", "used_at", `ALTER TABLE locks ADD COLUMN used_at INTEGER NOT NULL DEFAULT 0`},
+	// v4: mail addressed to the recipient by name or id (only that holds a turn).
+	{"receipts", "direct", `ALTER TABLE receipts ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`},
+	// v5: SHA-256 of the agent's key (keys.go); '' = registered by an older version.
+	{"agents", "key_hash", `ALTER TABLE agents ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`},
 }
 
+// migrate brings db to the current schema.
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schemaV2); err != nil {
-		return fmt.Errorf("schema v2: %w", err)
+		return fmt.Errorf("schema: %w", err)
 	}
 	for _, c := range addedColumns {
 		ok, err := hasColumn(db, c.table, c.column)
@@ -67,7 +87,7 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// upgraded reports whether the v2 schema is already in place (reads only).
+// upgraded reports whether the current schema is already in place (reads only).
 func upgraded(db *sql.DB) bool {
 	for _, c := range addedColumns {
 		if ok, err := hasColumn(db, c.table, c.column); err != nil || !ok {
@@ -75,8 +95,8 @@ func upgraded(db *sql.DB) bool {
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters')`).Scan(&n)
-	return err == nil && n == 3
+	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget')`).Scan(&n)
+	return err == nil && n == 5
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {

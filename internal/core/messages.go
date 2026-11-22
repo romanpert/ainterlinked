@@ -61,8 +61,9 @@ func scanMsg(r scanner) (Message, error) {
 const MaxBody = 16000
 
 // Send stores a message and fans it out to its recipients, each in the
-// delivery mode it chose: named recipients and urgent mail get the full
-// body, group mail follows the recipient's broadcast/topic preference.
+// delivery mode it chose: named recipients get the full body, group mail
+// follows the recipient's broadcast/topic preference (urgent too, unless the
+// human sent it). A broadcast spends one of the sender's BroadcastBurst.
 func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 	if strings.TrimSpace(r.Body) == "" {
 		return Message{}, errors.New("body is required")
@@ -96,11 +97,19 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 		return Message{}, err
 	}
 	if len(recips) == 0 {
-		return Message{}, fmt.Errorf("no recipients for %q (nobody online there, or they muted broadcasts: name an agent or set urgent)", r.To)
+		return Message{}, fmt.Errorf("no recipients for %q (nobody online there, or they muted broadcasts: name an agent)", r.To)
+	}
+	if len(recips) == 1 && strings.TrimSpace(r.To) == recips[0].ID {
+		display = recips[0].Name // addressed by id (hub notices, task updates): show the name
 	}
 	var out Message
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.ms()
+		if isBroadcast(r.To, sender) && !isHuman(sender) {
+			if err := spendBroadcast(tx, now, sender); err != nil {
+				return err
+			}
+		}
 		res, err := tx.Exec(`INSERT INTO messages(thread_id,reply_to,sender_id,sender_name,target,subject,body,urgent,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
 			parent.ThreadID, r.ReplyTo, sender.ID, sender.Name, oneLine(display, 200), oneLine(r.Subject, 200), r.Body, b2i(r.Urgent), now)
 		if err != nil {
@@ -117,7 +126,7 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 		out = Message{ID: id, ThreadID: thread, ReplyTo: r.ReplyTo, FromID: sender.ID, From: sender.Name, Target: display,
 			Subject: r.Subject, Body: r.Body, Urgent: r.Urgent, CreatedAt: now}
 		for _, rc := range recips {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode) VALUES(?,?,?)`, id, rc.ID, rc.mode); err != nil {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode,direct) VALUES(?,?,?,?)`, id, rc.ID, rc.mode, b2i(rc.direct)); err != nil {
 				return err
 			}
 			if rc.mode == ModeBrief {
@@ -130,11 +139,13 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 			}
 		}
 		_, _ = tx.Exec(`UPDATE agents SET last_seen=? WHERE id=?`, now, sender.ID)
-		summary := r.Subject
-		if summary == "" {
-			summary = r.Body
+		// The feed is readable by every agent and device: who wrote to whom
+		// and the subject, never the body.
+		line := fmt.Sprintf("%s → %s", sender.Name, feedTarget(display, len(recips)))
+		if r.Subject != "" {
+			line += ": " + clip(oneLine(r.Subject, 200), 120)
 		}
-		event(tx, now, &sender, "message", fmt.Sprintf("%s → %s: %s", sender.Name, feedTarget(display, len(recips)), clip(summary, 120)))
+		event(tx, now, &sender, "message", line)
 		return nil
 	})
 	return out, err
@@ -166,34 +177,43 @@ func b2i(b bool) int {
 	return 0
 }
 
-// recipient is one agent a message goes to and how.
+// recipient is one agent a message goes to and how. direct means it was
+// addressed by name or id: only such mail may hold its turn open.
 type recipient struct {
 	Agent
-	mode string
+	mode   string
+	direct bool
 }
 
+// recipients expands a target into agents and their delivery modes. The
+// recipient's attention is its own: its broadcast and topic choices hold
+// for urgent mail too. Only the human, whose sessions these are, can push
+// urgent mail past them.
 func (s *Store) recipients(ctx context.Context, sender Agent, to string, urgent bool) ([]recipient, error) {
+	override := urgent && isHuman(sender)
 	mode := map[string]string{}
+	direct := map[string]bool{}
 	var order []Agent
-	add := func(a Agent, m string) {
+	add := func(a Agent, m string, named bool) {
 		if a.ID == sender.ID || m == ModeOff || m == "" {
 			return
 		}
-		if urgent {
+		if override {
 			m = ModeFull
 		}
 		if _, ok := mode[a.ID]; !ok {
 			order = append(order, a)
 		}
 		mode[a.ID] = stronger(mode[a.ID], m)
+		direct[a.ID] = direct[a.ID] || named
 	}
 	group := func(list []Agent) {
 		for _, a := range list {
 			m := s.broadcastMode(ctx, a.ID)
-			if urgent && m == ModeOff {
+			if override && m == ModeOff {
 				m = ModeFull
 			}
-			add(a, m)
+			add(a, m, false)
 		}
 	}
 	needProject := func() error {
@@ -256,7 +276,7 @@ func (s *Store) recipients(ctx context.Context, sender Agent, to string, urgent 
 				return nil, err
 			}
 			for _, rc := range subs {
-				add(rc.Agent, rc.mode)
+				add(rc.Agent, rc.mode, false)
 			}
 		case strings.HasPrefix(part, "project:"):
 			list, err := s.List(ctx, AgentFilter{Project: strings.TrimPrefix(part, "project:")})
@@ -278,12 +298,12 @@ func (s *Store) recipients(ctx context.Context, sender Agent, to string, urgent 
 			if a.ID == sender.ID {
 				return nil, errors.New("you can't message yourself")
 			}
-			add(a, ModeFull)
+			add(a, ModeFull, true)
 		}
 	}
 	out := make([]recipient, 0, len(order))
 	for _, a := range order {
-		out = append(out, recipient{a, mode[a.ID]})
+		out = append(out, recipient{a, mode[a.ID], direct[a.ID]})
 	}
 	return out, nil
 }
@@ -299,13 +319,14 @@ func (s *Store) subscribers(ctx context.Context, projectPath, topic string) ([]r
 		var m string
 		err := s.db.QueryRowContext(ctx, `SELECT mode FROM subscriptions WHERE agent_id=? AND topic=?`, a.ID, topic).Scan(&m)
 		if err == nil {
-			out = append(out, recipient{a, m})
+			out = append(out, recipient{Agent: a, mode: m})
 		}
 	}
 	return out, nil
 }
 
-// notice queues a hub-generated message for one agent, inside the caller's tx.
+// notice queues a hub-generated message for one agent, inside the caller's
+// tx. It is addressed to that agent, so it counts as direct mail.
 func notice(tx *sql.Tx, now int64, to Agent, subject, body string) {
 	res, err := tx.Exec(`INSERT INTO messages(thread_id,reply_to,sender_id,sender_name,target,subject,body,urgent,created_at) VALUES(0,0,?,?,?,?,?,0,?)`,
 		SystemSender, SystemSender, to.Name, oneLine(subject, 200), body, now)
@@ -314,7 +335,7 @@ func notice(tx *sql.Tx, now int64, to Agent, subject, body string) {
 	}
 	id, _ := res.LastInsertId()
 	_, _ = tx.Exec(`UPDATE messages SET thread_id=? WHERE id=?`, id, id)
-	_, _ = tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode) VALUES(?,?,?)`, id, to.ID, ModeFull)
+	_, _ = tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode,direct) VALUES(?,?,?,1)`, id, to.ID, ModeFull)
 }
 
 // InboxReq reads an agent's messages.
@@ -324,7 +345,8 @@ type InboxReq struct {
 	Peek       bool   `json:"peek,omitempty"`  // don't mark as read
 	Limit      int    `json:"limit,omitempty"` // default 20
 	UrgentOnly bool   `json:"urgent_only,omitempty"`
-	Mode       string `json:"mode,omitempty"` // only mail delivered in this mode: full or brief
+	Mode       string `json:"mode,omitempty"`   // only mail delivered in this mode: full or brief
+	Direct     bool   `json:"direct,omitempty"` // only mail addressed to this agent by name or id
 	// Budget caps the characters taken in one read (0 = no cap); messages
 	// past it stay unread for the next one instead of being marked read
 	// and cut off. The first message is always taken.
@@ -362,6 +384,9 @@ func (s *Store) Inbox(ctx context.Context, r InboxReq) ([]Message, error) {
 	if r.Mode != "" {
 		query += ` AND r.mode=?`
 		args = append(args, r.Mode)
+	}
+	if r.Direct {
+		query += ` AND r.direct=1`
 	}
 	// Unread: oldest first so nothing is skipped (full mail before briefs).
 	// History: the latest N.
@@ -451,15 +476,16 @@ func (s *Store) Inbox(ctx context.Context, r InboxReq) ([]Message, error) {
 
 // Unread counts an agent's unread messages (stale briefs excluded).
 func (s *Store) Unread(ctx context.Context, agent string) (total, urgent int, err error) {
-	total, urgent, _, err = s.UnreadByMode(ctx, agent)
+	total, urgent, _, _, err = s.UnreadByMode(ctx, agent)
 	return
 }
 
-// UnreadByMode also counts how many unread messages are delivered in full.
-func (s *Store) UnreadByMode(ctx context.Context, agent string) (total, urgent, full int, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(m.urgent),0), coalesce(sum(r.mode='full'),0)
+// UnreadByMode also counts how many unread messages are delivered in full,
+// and how many of those were addressed to the agent by name or id.
+func (s *Store) UnreadByMode(ctx context.Context, agent string) (total, urgent, full, direct int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(m.urgent),0), coalesce(sum(r.mode='full'),0), coalesce(sum(r.direct),0)
 		FROM receipts r JOIN messages m ON m.id=r.message_id
-		WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, agent, s.ms()-BriefTTL.Milliseconds()).Scan(&total, &urgent, &full)
+		WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, agent, s.ms()-BriefTTL.Milliseconds()).Scan(&total, &urgent, &full, &direct)
 	return
 }
 
@@ -497,6 +523,14 @@ func (s *Store) Wait(ctx context.Context, agent string, timeout time.Duration) (
 	}
 }
 
+// inThread reports whether agent wrote or received a message of thread.
+func (s *Store) inThread(ctx context.Context, thread int64, agent string) bool {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages m LEFT JOIN receipts r ON r.message_id=m.id
+		WHERE m.thread_id=? AND (m.sender_id=? OR r.agent_id=?)`, thread, agent, agent).Scan(&n)
+	return err == nil && n > 0
+}
+
 // Thread returns every message in a thread, oldest first. Only participants
 // (sender or recipient of some message in it) may read it.
 func (s *Store) Thread(ctx context.Context, agent string, id int64) ([]Message, error) {
@@ -504,10 +538,7 @@ func (s *Store) Thread(ctx context.Context, agent string, id int64) ([]Message, 
 	if err := s.db.QueryRowContext(ctx, `SELECT thread_id FROM messages WHERE id=?`, id).Scan(&thread); err != nil {
 		return nil, fmt.Errorf("no message #%d", id)
 	}
-	var n int
-	_ = s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages m LEFT JOIN receipts r ON r.message_id=m.id
-		WHERE m.thread_id=? AND (m.sender_id=? OR r.agent_id=?)`, thread, agent, agent).Scan(&n)
-	if n == 0 && agent != "" {
+	if agent != "" && !s.inThread(ctx, thread, agent) {
 		return nil, fmt.Errorf("you are not part of thread #%d", thread)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE thread_id=? ORDER BY id`, thread)

@@ -17,7 +17,7 @@ func inbox(t *testing.T, s *Store, id string) []Message {
 }
 
 // Group mail reaches each agent the way it chose: one-line briefs by
-// default, full or nothing on request; named and urgent mail always in full.
+// default, full or nothing on request; named mail always in full.
 func TestDeliveryModesFollowEachRecipientsPrefs(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -45,8 +45,8 @@ func TestDeliveryModesFollowEachRecipientsPrefs(t *testing.T) {
 		t.Fatalf("b should get a brief: %+v", got)
 	}
 	u, _ := s.Send(ctx, SendReq{From: a.ID, To: "project", Body: "stop pushing", Urgent: true})
-	if len(u.Delivered) != 3 {
-		t.Fatalf("urgent reaches everyone in full, even muted: %+v", u)
+	if strings.Join(u.Briefed, ",") != b.Name || strings.Join(u.Delivered, ",") != c.Name {
+		t.Fatalf("an agent's urgent mail follows each recipient's choice: %+v", u)
 	}
 	dm, _ := s.Send(ctx, SendReq{From: a.ID, To: d.Name, Body: "just you"})
 	if len(dm.Delivered) != 1 {
@@ -553,5 +553,25 @@ func TestMigrationFromV1AndOlderBinaries(t *testing.T) {
 	_ = s.db.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&have)
 	if have != "1" {
 		t.Fatalf("an already-upgraded database must be left alone, marker now %q", have)
+	}
+}
+
+// Mail addressed by id (the "task done" notice to its creator) shows the
+// recipient's name, not a raw id, in the feed and the dashboard.
+func TestMailByIDShowsTheName(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	a := reg(t, s, RegisterReq{Harness: "claude-code", Project: "api", AnchorPID: 1})
+	b := reg(t, s, RegisterReq{Harness: "codex", Project: "api", AnchorPID: 2})
+	task, _ := s.CreateTask(ctx, TaskReq{By: a.ID, Title: "split invoices"})
+	if _, err := s.Claim(ctx, b.ID, task.ID); err != nil { // a task is finished by its holder
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTask(ctx, TaskUpdate{ID: task.ID, By: b.ID, Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	got := inbox(t, s, a.ID)
+	if len(got) != 1 || got[0].Target != a.Name {
+		t.Fatalf("notice to the creator is addressed by name: %+v", got)
 	}
 }

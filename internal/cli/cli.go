@@ -44,7 +44,7 @@ Use (as the human operator)
   task claim|done|block|cancel|reopen <id> [--result text]
   locks                              active file reservations
   feed [-f] [-n 50]                  activity feed (-f follows)
-  serve [--listen addr] [--token t]  web dashboard + hub for other machines
+  serve [--listen 127.0.0.1:port]    web dashboard for this machine
   launch <harness> [--name n] [--role r] [-- args]   start a harness with a fixed identity
                                      (launch claude also enables push into idle sessions)
 

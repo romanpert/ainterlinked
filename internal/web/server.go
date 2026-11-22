@@ -1,10 +1,9 @@
-// Package web serves the hub over HTTP: /rpc for remote machines, /api for
-// the dashboard, and the dashboard itself.
+// Package web serves this machine's dashboard: the page and its /api, on
+// loopback only.
 package web
 
 import (
 	"context"
-	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -25,7 +24,6 @@ var dashboard []byte
 // Server is the HTTP front of a local hub.
 type Server struct {
 	Hub     *hub.Local
-	Token   string
 	Machine string
 	Version string
 	// Scan reports the harnesses on this machine (re-run at most once a
@@ -74,10 +72,11 @@ func IsLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Listen serves until ctx is cancelled. A non-loopback address requires a token.
+// Listen serves until ctx is cancelled, on loopback only: the dashboard is
+// this machine's (connecting devices is the hosted service's job).
 func (s *Server) Listen(ctx context.Context, addr string) error {
-	if !IsLoopback(addr) && s.Token == "" {
-		return errors.New("refusing to listen on a non-loopback address without a token (set --token or token in config.toml)")
+	if !IsLoopback(addr) {
+		return errors.New("the dashboard listens on this machine only (127.0.0.1 or localhost)")
 	}
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -105,36 +104,38 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
 		w.Write(dashboard)
 	})
-	mux.HandleFunc("/rpc", s.auth(s.rpc))
-	mux.HandleFunc("/api/state", s.auth(s.state))
-	mux.HandleFunc("/api/send", s.auth(s.send))
+	mux.HandleFunc("/api/state", local(s.state))
+	mux.HandleFunc("/api/send", local(s.send))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	return mux
 }
 
-func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
+// local admits only requests from this machine's own browser: a loopback
+// Host (so a DNS-rebinding page can't reach it), nothing that came through
+// a proxy (to it, every client looks like loopback), and no other site's
+// page (CSRF).
+func local(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Browsers on other sites must not drive a local hub (CSRF / DNS rebinding).
 		if origin := r.Header.Get("Origin"); origin != "" && !strings.HasSuffix(origin, "://"+r.Host) {
 			writeJSON(w, http.StatusForbidden, hub.Response{Error: "cross-origin request refused"})
 			return
 		}
-		// Without a token the hub is loopback-only; also refuse foreign Host
-		// headers so a DNS-rebinding page can't reach it.
-		if s.Token == "" && !loopbackHost(r.Host) {
+		if !loopbackHost(r.Host) || proxied(r) {
 			writeJSON(w, http.StatusForbidden, hub.Response{Error: "host not allowed"})
 			return
 		}
-		if s.Token != "" {
-			// Header only: a token in the URL would end up in history and logs.
-			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) != 1 {
-				writeJSON(w, http.StatusUnauthorized, hub.Response{Error: "bad or missing token"})
-				return
-			}
-		}
 		next(w, r)
 	}
+}
+
+// proxied reports whether a request was forwarded by a proxy.
+func proxied(r *http.Request) bool {
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func loopbackHost(hostport string) bool {
@@ -154,25 +155,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func (s *Server) rpc(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, hub.Response{Error: "POST only"})
-		return
-	}
-	var req hub.Request
-	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, hub.Response{Error: "bad request: " + err.Error()})
-		return
-	}
-	res, err := s.Hub.Dispatch(r.Context(), req.Method, req.Params)
-	if err != nil {
-		writeJSON(w, http.StatusOK, hub.Response{Error: err.Error()})
-		return
-	}
-	b, _ := json.Marshal(res)
-	writeJSON(w, http.StatusOK, hub.Response{Result: b})
 }
 
 type state struct {
@@ -224,12 +206,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 }
 
 // Human registers (or refreshes) the "human" agent the dashboard and CLI send as.
+// Agents can't register as the human through the hub's "register" method.
 func Human(ctx context.Context, c hub.Client, machine string) (core.Agent, error) {
-	var a core.Agent
-	err := c.Call(ctx, "register", core.RegisterReq{
-		Harness: "human", Name: "human", Machine: machine, Project: "", SessionID: "human@" + machine, Via: "cli", Delivery: "pull",
-	}, &a)
-	return a, err
+	return hub.Human(ctx, c, machine)
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request) {

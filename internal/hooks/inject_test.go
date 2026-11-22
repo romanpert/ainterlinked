@@ -75,6 +75,33 @@ func TestStopHoldIgnoresBriefs(t *testing.T) {
 	}
 }
 
+// A held turn is the recipient's to give: group mail never holds it, even
+// urgent, delivered in full or on a full-mode topic. Mail to its name does,
+// and the group mail left waiting arrives at the next tool call.
+func TestOnlyDirectMailHoldsTheTurn(t *testing.T) {
+	e := setup(t)
+	e.as("1", "claude-code", "SessionStart", nil)
+	e.as("2", "codex", "SessionStart", nil)
+	e.prefs("1", core.PrefsReq{Broadcasts: core.ModeFull, Subscribe: []string{"reload"}})
+	for _, to := range []string{"project", "#reload", "*"} {
+		if err := e.c.Call(context.Background(), "send", core.SendReq{From: e.agent("2").ID, To: to, Body: "group news via " + to, Urgent: true}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, out := e.as("1", "claude-code", "Stop", nil); out != nil {
+		t.Fatalf("group mail must not hold the turn: %v", out)
+	}
+	e.send("2", "1", "only you: rebase first")
+	_, out := e.as("1", "claude-code", "Stop", nil)
+	reason, _ := out["reason"].(string)
+	if out["decision"] != "block" || !strings.Contains(reason, "rebase first") || strings.Contains(reason, "group news") {
+		t.Fatalf("direct mail holds the turn, alone: %v", out)
+	}
+	if got := tool(e, "1"); strings.Count(got, "group news") != 3 {
+		t.Fatalf("the group mail arrives at the next tool call: %s", got)
+	}
+}
+
 // Agents set their own cadence and limits; what doesn't fit stays unread.
 func TestAgentsTuneTheirOwnDelivery(t *testing.T) {
 	e := setup(t)

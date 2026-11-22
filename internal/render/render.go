@@ -151,7 +151,9 @@ func PeerMessages(list []core.Message, maxChars int) string {
 	for i, m := range list {
 		body := strings.ReplaceAll(m.Body, nonce, "")
 		var one strings.Builder
-		fmt.Fprintf(&one, "<<peer-message %s #%d from %s to %s, %s ago", nonce, m.ID, m.From, m.Target, Ago(m.CreatedAt))
+		// The id leads; the nonce comes last and labelled, so no model takes it
+		// for the id it should reply to.
+		fmt.Fprintf(&one, "<<peer-message #%d from %s to %s, %s ago", m.ID, m.From, m.Target, Ago(m.CreatedAt))
 		if m.ThreadID != m.ID && m.ThreadID != 0 {
 			fmt.Fprintf(&one, ", thread #%d", m.ThreadID)
 		}
@@ -161,7 +163,7 @@ func PeerMessages(list []core.Message, maxChars int) string {
 		if m.Subject != "" {
 			fmt.Fprintf(&one, ", subject: %s", strings.ReplaceAll(m.Subject, nonce, ""))
 		}
-		fmt.Fprintf(&one, ">>\n%s\n<<end %s #%d>>\n", strings.TrimRight(body, "\n"), nonce, m.ID)
+		fmt.Fprintf(&one, " | fence %s>>\n%s\n<<end #%d | fence %s>>\n", nonce, strings.TrimRight(body, "\n"), m.ID, nonce)
 		s := one.String()
 		if maxChars > 0 && b.Len()+len(s) > maxChars && i > 0 {
 			// Already marked read: name them so nothing is silently lost.
@@ -173,16 +175,16 @@ func PeerMessages(list []core.Message, maxChars int) string {
 			break
 		}
 		if maxChars > 0 && len(s) > maxChars {
-			s = cutUTF8(s, maxChars) + fmt.Sprintf("…\n<<end %s #%d (truncated; get_thread %d for the rest)>>\n", nonce, m.ID, m.ID)
+			s = cutUTF8(s, maxChars) + fmt.Sprintf("…\n<<end #%d | fence %s (truncated; get_thread %d for the rest)>>\n", m.ID, nonce, m.ID)
 		}
 		b.WriteString(s)
 	}
 	if len(briefs) > 0 {
-		fmt.Fprintf(&b, "<<peer-briefs %s: group announcements, one line each; get_thread <id> reads one in full>>\n", nonce)
+		fmt.Fprintf(&b, "<<peer-briefs: group announcements, one line each; get_thread <id> reads one in full | fence %s>>\n", nonce)
 		for _, m := range briefs {
 			b.WriteString(strings.ReplaceAll(BriefLine(m), nonce, "") + "\n")
 		}
-		fmt.Fprintf(&b, "<<end %s briefs>>\n", nonce)
+		fmt.Fprintf(&b, "<<end briefs | fence %s>>\n", nonce)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -246,6 +248,12 @@ func Tasks(list []core.Task) string {
 			fmt.Fprintf(&b, " · %s", strings.Join(t.Labels, ","))
 		}
 		fmt.Fprintf(&b, " · %s", t.Board)
+		if t.Wanted > 0 {
+			fmt.Fprintf(&b, " · %d waiting on it", t.Wanted)
+		}
+		if t.Terms != "" {
+			fmt.Fprintf(&b, "\n    terms: %s", t.Terms)
+		}
 		if t.Result != "" {
 			fmt.Fprintf(&b, "\n    result: %s", firstLine(t.Result, 160))
 		}
@@ -310,7 +318,15 @@ func Locks(list []core.Lock) string {
 			fmt.Fprintf(&b, " (reason %q)", l.Reason)
 		}
 		left := time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute)
-		fmt.Fprintf(&b, " · expires in %s · %s\n", left, l.ProjectPath)
+		if l.LapsesAt > 0 {
+			fmt.Fprintf(&b, " · lapses in %s if unused", time.Until(time.UnixMilli(l.LapsesAt)).Round(time.Minute))
+		} else {
+			fmt.Fprintf(&b, " · expires in %s", left)
+		}
+		fmt.Fprintf(&b, " · %s\n", l.ProjectPath)
+		if l.Terms != "" {
+			fmt.Fprintf(&b, "    terms: %s\n", l.Terms)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

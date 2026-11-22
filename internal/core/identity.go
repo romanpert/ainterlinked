@@ -63,14 +63,12 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 		return Agent{}, fmt.Errorf("%s can't be continued by an agent", old.Name)
 	}
 	// The project is identified by its checkout, not by the name an agent
-	// declares: the same path on the same machine. A machine name is only
-	// what a client says, so a hand-over across machines would rest on a
-	// claim anyone can make: refused until hubs know machines by credential.
+	// declares: the same path on the same machine.
 	switch {
 	case self.ProjectPath == "" || old.ProjectPath == "":
 		return Agent{}, errors.New("both agents need a project checkout to hand over work")
 	case old.Machine != self.Machine:
-		return Agent{}, fmt.Errorf("%s worked on another machine (%q); hand-overs work within one machine only", old.Name, old.Machine)
+		return Agent{}, fmt.Errorf("%s worked on machine %q; hand-overs work within one machine only", old.Name, old.Machine)
 	case old.ProjectPath != self.ProjectPath:
 		return Agent{}, fmt.Errorf("%s worked in %s, you are in %s; continue it from that checkout", old.Name, old.ProjectPath, self.ProjectPath)
 	}

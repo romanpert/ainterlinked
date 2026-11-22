@@ -299,7 +299,7 @@ func jsonServerRemove(t *Tx, file string, key []string) {
 // ToolNames lists the MCP tools (for harnesses that want an allow-list).
 var ToolNames = []string{
 	"whoami", "list_agents", "set_status", "set_delivery", "send_message", "read_inbox", "wait_for_messages", "get_thread",
-	"create_task", "list_tasks", "list_boards", "claim_task", "update_task",
+	"create_task", "list_tasks", "list_boards", "claim_task", "want_task", "update_task",
 	"reserve_files", "release_files", "list_reservations", "activity_feed",
 }
 

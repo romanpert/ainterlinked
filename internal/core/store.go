@@ -12,12 +12,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+// schemaVersion is raised with every addition to migrate.go: a database
+// marked with the current version is not migrated again on open.
+const schemaVersion = 5
 
 func atoi(s string) int {
 	n := 0
@@ -122,6 +125,10 @@ type Store struct {
 	machine string
 	alive   func(pids []int) (map[int]bool, error)
 	now     func() time.Time
+
+	keyPath string     // the hub secret agent keys derive from (keys.go)
+	keyMu   sync.Mutex // guards secret
+	secret  []byte
 }
 
 // Options tune a Store.
@@ -180,7 +187,8 @@ func Open(path string, opt Options) (*Store, error) {
 	if opt.Stale <= 0 {
 		opt.Stale = 45 * time.Second
 	}
-	return &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now}, nil
+	return &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now,
+		keyPath: filepath.Join(filepath.Dir(path), "hub.key")}, nil
 }
 
 // Close closes the database.
@@ -305,6 +313,8 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		// (read_at = now, so they stay in history for the retention window.)
 		{`UPDATE receipts SET read_at=strftime('%s','now')*1000 WHERE read_at=0 AND mode='brief' AND message_id IN (SELECT id FROM messages WHERE created_at < ?)`, s.ms() - BriefTTL.Milliseconds()},
 		{`DELETE FROM locks WHERE expires_at < ?`, s.ms()},
+		// A refilled broadcast budget is the same as none.
+		{`DELETE FROM broadcast_budget WHERE full_at < ?`, s.ms()},
 		{`DELETE FROM receipts WHERE read_at > 0 AND read_at < ?`, cut},
 		{`DELETE FROM messages WHERE created_at < ? AND id NOT IN (SELECT message_id FROM receipts)`, cut},
 		{`DELETE FROM agents WHERE online=0 AND last_seen < ? AND id NOT IN (SELECT agent_id FROM receipts WHERE read_at=0)`, cut},

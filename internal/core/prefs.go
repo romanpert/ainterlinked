@@ -14,7 +14,7 @@ import (
 const (
 	ModeFull  = "full"  // the whole body reaches the model
 	ModeBrief = "brief" // one line (subject or the start of the body) + get_thread id
-	ModeOff   = "off"   // not delivered at all (urgent messages still are)
+	ModeOff   = "off"   // not delivered at all (the human's urgent mail still is)
 )
 
 // Injection cadences: when hooks put unread mail into the model's context.

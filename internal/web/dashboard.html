@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>interlinked switchboard</title>
+<title>ainterlinked switchboard</title>
 <style>
 /* Layout: switchboard — agents (presence) | task board | live feed & mail. */
 :root {
@@ -81,7 +81,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 </head>
 <body>
 <header>
-  <h1>inter<span>linked</span></h1>
+  <h1>ainter<span>linked</span></h1>
   <div class="meta" id="meta">connecting…</div>
 </header>
 <main>
@@ -112,23 +112,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   </section>
 </main>
 <script>
-// A remote hub's token is passed once as #token=… (never in the query), kept
-// in sessionStorage and removed from the address bar.
-let token = "";
-try { token = sessionStorage.getItem("il-token") || ""; } catch {}
-const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
-if (fromHash) {
-  token = fromHash;
-  try { sessionStorage.setItem("il-token", token); } catch {}
-  history.replaceState(null, "", location.pathname);
-}
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ago = (ms) => { const s = Math.max(0, (Date.now() - ms) / 1000); return s < 60 ? Math.round(s) + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 172800 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; };
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 let board = "";
 async function api(path, body) {
-  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json();
   if (j.error) throw new Error(j.error);
   return j;
@@ -149,9 +139,9 @@ function renderHarnesses(list) {
   if (!seen.length) { $("harnesses").innerHTML = `<div class="empty">Machine scan unavailable.</div>`; return; }
   $("harnesses").innerHTML = seen.map((h) => {
     let note, cls;
-    if (!h.mcp) { note = `detected, not wired · <span class="act">interlinked install ${esc(h.id)}</span>`; cls = "s-blocked"; }
+    if (!h.mcp) { note = `detected, not wired · <span class="act">ainterlinked install ${esc(h.id)}</span>`; cls = "s-blocked"; }
     else if (!h.enabled) { note = "muted · interlinked enable " + esc(h.id); cls = "s-offline"; }
-    else if (h.has_hooks && !h.hooks) { note = `MCP only, hooks missing · <span class="act">interlinked install ${esc(h.id)}</span>`; cls = "s-waiting"; }
+    else if (h.has_hooks && !h.hooks) { note = `MCP only, hooks missing · <span class="act">ainterlinked install ${esc(h.id)}</span>`; cls = "s-waiting"; }
     else { note = "wired"; cls = "s-working"; }
     return `<div class="sub ${cls}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="dot"></span><b style="color:var(--fg)">${esc(h.name)}</b>
       ${h.mcp ? `<span class="chip tier-${esc(h.tier)}">${esc(h.tier)}</span>` : ""}<span>${note}</span></div>`;
@@ -163,7 +153,7 @@ function renderBoard(tasks, boards) {
   $("board-pick").innerHTML = names.map((n) => `<option ${n === board ? "selected" : ""}>${esc(n)}</option>`).join("");
   const cols = [["todo", "To do"], ["doing", "Doing"], ["blocked", "Blocked"], ["done", "Done"]];
   const mine = tasks.filter((t) => t.board === board);
-  if (!mine.length) { $("board").innerHTML = `<div class="empty">No tasks on this board. Agents add them with create_task, or run: interlinked task add "Title"</div>`; return; }
+  if (!mine.length) { $("board").innerHTML = `<div class="empty">No tasks on this board. Agents add them with create_task, or run: ainterlinked task add "Title"</div>`; return; }
   $("board").innerHTML = cols.map(([k, label]) => {
     const items = mine.filter((t) => (k === "blocked" ? t.status === "blocked" || t.status === "review" : t.status === k));
     return `<div class="col"><h3>${label}<span>${items.length}</span></h3>${items.slice(0, 40).map((t) => `<div class="task p${t.priority}">

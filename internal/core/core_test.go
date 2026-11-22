@@ -20,7 +20,7 @@ func newStore(t *testing.T) *Store {
 	return s
 }
 
-func reg(t *testing.T, s *Store, r RegisterReq) Agent {
+func reg(t *testing.T, s *Store, r RegisterReq, ctx ...context.Context) Agent {
 	t.Helper()
 	if r.Machine == "" {
 		r.Machine = "box"
@@ -28,7 +28,11 @@ func reg(t *testing.T, s *Store, r RegisterReq) Agent {
 	if r.ProjectPath == "" {
 		r.ProjectPath = "/work/" + r.Project
 	}
-	a, err := s.Register(context.Background(), r)
+	c := context.Background()
+	if len(ctx) > 0 {
+		c = ctx[0]
+	}
+	a, err := s.Register(c, r)
 	if err != nil {
 		t.Fatal(err)
 	}

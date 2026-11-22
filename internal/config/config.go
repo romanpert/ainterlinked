@@ -13,16 +13,17 @@ import (
 
 // Config is the user configuration stored at <home>/config.toml.
 type Config struct {
-	// Hub is empty for the local SQLite hub, or the URL of a remote
-	// `interlinked serve` (e.g. http://100.64.0.2:7717) to join another machine.
-	Hub   string `toml:"hub"`
-	Token string `toml:"token"`
+	// OldHub is a `hub = "<url>"` left from a version that could join
+	// another machine's hub. The library serves one machine, so it is
+	// ignored (doctor says so) and dropped on the next save.
+	OldHub string `toml:"-"`
 	// Machine is the name this machine shows to peers (defaults to hostname).
 	Machine string `toml:"machine"`
 
 	Delivery  Delivery              `toml:"delivery"`
 	Presence  Presence              `toml:"presence"`
 	Locks     Locks                 `toml:"locks"`
+	Covenant  Covenant              `toml:"covenant"`
 	Server    Server                `toml:"server"`
 	Harnesses map[string]HarnessCfg `toml:"harnesses"`
 }
@@ -57,6 +58,13 @@ type Locks struct {
 	TTLMinutes int    `toml:"ttl_minutes"`
 }
 
+// Covenant controls how a repo's rules (.interlinked/covenant.md) reach agents.
+type Covenant struct {
+	// Show briefs the core rules at session start and holds back an agent's
+	// first edit in an area that has rules, with those rules, once per session.
+	Show bool `toml:"show"`
+}
+
 // Server configures `interlinked serve`.
 type Server struct {
 	Listen string `toml:"listen"`
@@ -79,6 +87,7 @@ func Default() Config {
 		},
 		Presence:  Presence{HeartbeatSeconds: 10, StaleSeconds: 45, TrackActivity: true},
 		Locks:     Locks{Enforce: "deny", TTLMinutes: 30},
+		Covenant:  Covenant{Show: true},
 		Server:    Server{Listen: "127.0.0.1:7717"},
 		Harnesses: map[string]HarnessCfg{},
 	}
@@ -111,14 +120,10 @@ func Path() string { return filepath.Join(Home(), "config.toml") }
 // DBPath of the local hub database.
 func DBPath() string { return filepath.Join(Home(), "hub.db") }
 
-// Load reads the config with environment overrides applied (for running).
-func Load() (Config, error) {
-	cfg, err := LoadFile()
-	return applyEnv(cfg), err
-}
+// Load reads the config (for running).
+func Load() (Config, error) { return LoadFile() }
 
-// LoadFile reads the config file only, without environment overrides (for
-// editing and saving it back). Missing fields keep their defaults.
+// LoadFile reads the config file. Missing fields keep their defaults.
 func LoadFile() (Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(Path())
@@ -131,20 +136,16 @@ func LoadFile() (Config, error) {
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
+	var old struct {
+		Hub string `toml:"hub"`
+	}
+	if _, err := toml.Decode(string(data), &old); err == nil {
+		cfg.OldHub = old.Hub
+	}
 	if cfg.Harnesses == nil {
 		cfg.Harnesses = map[string]HarnessCfg{}
 	}
 	return cfg, nil
-}
-
-func applyEnv(cfg Config) Config {
-	if v := os.Getenv("INTERLINKED_HUB"); v != "" {
-		cfg.Hub = v
-	}
-	if v := os.Getenv("INTERLINKED_TOKEN"); v != "" {
-		cfg.Token = v
-	}
-	return cfg
 }
 
 // HarnessEnabled reports whether a harness may talk on the bus.
@@ -166,7 +167,7 @@ func Save(cfg Config) error {
 	}
 	var b strings.Builder
 	b.WriteString("# interlinked configuration — https://github.com/romanpert/ainterlinked\n")
-	b.WriteString("# hub = \"\" uses the local hub; set it to http://<host>:7717 to join another machine.\n\n")
+	b.WriteString("# One machine, one hub (" + DBPath() + ").\n\n")
 	if err := toml.NewEncoder(&b).Encode(cfg); err != nil {
 		return err
 	}

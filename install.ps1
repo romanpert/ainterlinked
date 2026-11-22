@@ -26,7 +26,9 @@ $want = if ($line) { ($line -split '\s+')[0].ToLower() } else { '' }
 $got = (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower()
 if (-not $want -or $want -ne $got) { Remove-Item $tmp -Force; throw "checksum mismatch for $asset - aborting" }
 Move-Item -Force $tmp $exe
-Write-Host "Installed $exe"
+# The project's name runs the same program, without a second copy of it.
+Set-Content -Encoding ascii -Path (Join-Path $dir 'ainterlinked.cmd') -Value '@"%~dp0interlinked.exe" %*'
+Write-Host "Installed $exe (also as ainterlinked)"
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not (($userPath -split ';') -contains $dir)) {

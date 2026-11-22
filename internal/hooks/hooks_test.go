@@ -63,8 +63,9 @@ func (e *env) as(pid, harness, event string, payload map[string]any) (Result, ma
 
 func (e *env) agent(pid string) core.Agent {
 	e.t.Helper()
-	var list []core.Agent
-	_ = e.c.Call(context.Background(), "agents", core.AgentFilter{}, &list)
+	// The anchor PID never leaves the hub (it picks whose key a registration
+	// gets), so the test reads the store directly.
+	list, _ := e.c.Store.List(context.Background(), core.AgentFilter{})
 	for _, a := range list {
 		if strings.HasSuffix(a.ID, "") && a.AnchorPID == atoi(pid) {
 			return a

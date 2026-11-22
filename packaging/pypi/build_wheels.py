@@ -58,6 +58,7 @@ def metadata(version: str) -> str:
         f"Name: {DIST_NAME}",
         f"Version: {version}",
         f"Summary: {SUMMARY}",
+        "Author: Román Pérez Dumpert",
         "Home-page: https://github.com/romanpert/ainterlinked",
         "Project-URL: Source, https://github.com/romanpert/ainterlinked",
         "Project-URL: Issues, https://github.com/romanpert/ainterlinked/issues",
@@ -134,6 +135,9 @@ def build_wheel(key: str, version: str, binary: pathlib.Path, dist: pathlib.Path
         (f"{data}/scripts/{exe_name}", binary.read_bytes(), 0o755),
         (f"{distinfo}/METADATA", metadata(version).encode(), 0o644),
         (f"{distinfo}/licenses/LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
+        (f"{distinfo}/licenses/NOTICE", (ROOT / "NOTICE").read_bytes(), 0o644),
+        # `ainterlinked` (the project's name) runs the same bundled binary.
+        (f"{distinfo}/entry_points.txt", f"[console_scripts]\nainterlinked = {PKG}.__main__:main\n".encode(), 0o644),
         (f"{distinfo}/WHEEL", ("Wheel-Version: 1.0\nGenerator: interlinked build_wheels.py\nRoot-Is-Purelib: false\n"
                                 + "".join(f"Tag: py3-none-{t}\n" for t in tags)).encode(), 0o644),
     ]

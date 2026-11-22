@@ -64,6 +64,32 @@ writeFileSync(join(PROJECT, "cart.js"), [
   "",
 ].join("\n"));
 writeFileSync(join(PROJECT, "README.md"), "# shop\n\nTiny demo project for interlinked.\n");
+// The owner's covenant: big enough that area rules are shown when an agent
+// works there (not all in the briefing), with one rule whose effect is visible.
+mkdirSync(join(PROJECT, ".interlinked"), { recursive: true });
+writeFileSync(join(PROJECT, ".interlinked", "covenant.md"), [
+  "# Covenant of shop",
+  "## *",
+  "- Keep changes small and focused on the task you hold.",
+  "## cart.js",
+  "- Money is rounded to cents with Math.round(x * 100) / 100, never toFixed.",
+  "- When you report a change to cart.js (a task result or a message), end the report with the tag [covenant:cart].",
+  "## api/**",
+  "- Handlers validate input at the boundary and never trust client prices.",
+  "## db/migrations/**",
+  "- Never edit a merged migration; add a new one with its down step.",
+  "## ui/**",
+  "- Use the design tokens for colors; never hardcode hex values in components.",
+  "## package.json",
+  "- New dependencies need a one-line reason in the commit message and the owner's OK.",
+  "## infra/**, .github/**",
+  "- Ask the owner before changing CI, deployment or anything that costs money.",
+  "## tests/**",
+  "- Tests are deterministic: no network, no sleeps, no real clock.",
+  "## .interlinked/covenant.md",
+  "- Propose changes to the owner; don't edit the covenant yourself.",
+  "",
+].join("\n"));
 const git = (...a) => spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", ...a], { cwd: PROJECT, encoding: "utf8" });
 git("init", "-q", "-b", "main");
 git("add", ".");
@@ -126,7 +152,7 @@ const claudePrompt = [
   "2. Call reserve_files with paths [\"cart.js\"], reason \"fixing rounding in total()\" and task 1. This also claims task 1.",
   "3. Call wait_for_messages with timeout_seconds 120 (call it again whenever it returns no messages). When a message containing PING arrives, answer it with send_message, reply_to set to its id, body: the same code with PING replaced by PONG, plus one short sentence saying you are fixing the rounding in cart.js.",
   "4. Keep waiting the same way until a message containing QUEUED arrives. Only then fix total() in cart.js with the Edit tool so it returns the sum rounded to cents: Math.round(sum * 100) / 100.",
-  "5. Call update_task with id 1, status done and result \"total() rounds to cents\". That hands cart.js to the next agent in line.",
+  "5. Call update_task with id 1, status done and a one-sentence result describing your change. That hands cart.js to the next agent in line.",
   "6. Wait once more (wait_for_messages, timeout_seconds 120) for a message containing DONE, then finish with a one-line summary.",
   "Never run shell commands. Never edit any file other than cart.js.",
 ].join("\n");
@@ -162,7 +188,7 @@ const codexPrompt = [
   `6. send_message to the Claude agent: "QUEUED-${c}: I'm queued for cart.js. It hands over to me when you close #1."`,
   "7. Call wait_for_messages with timeout_seconds 240, repeatedly, until you are told cart.js is now yours.",
   `8. Then, with apply_patch, add this line right above \"function total\" in cart.js: "/** Sum of price x qty, rounded to cents. Reviewed by Codex (REVIEWED-${c}). */"`,
-  `9. Call release_files, send_message to the Claude agent "DONE-${c}: comment added, cart.js released.", and finish.`,
+  `9. Call release_files, then send_message to the Claude agent a message that starts with "DONE-${c}:" and reports your change to cart.js in one sentence, and finish.`,
   "Do not run shell commands.",
 ].join("\n");
 let codex = null;
@@ -235,6 +261,23 @@ ok(fixed, "Claude's fix works: total(0.1 + 0.2) === 0.3");
 ok(reviewed, "Codex's comment landed after the hand-over");
 const done = msgs.find((m) => m.sender_name === codexName && m.body.includes(`DONE-${c}`));
 ok(Boolean(done), "Codex told Claude it was done");
+// The covenant: neither prompt mentions the tag; only the repo's rules do.
+const claudeText = existsSync(join(OUT, "claude.jsonl")) ? readFileSync(join(OUT, "claude.jsonl"), "utf8") : "";
+// How the cart.js rules reached each agent: the whole covenant in the
+// briefing, as context after touching the file, or an edit held back once.
+// The hooks log every delivery to <home>/covenant.log.
+const deliveries = existsSync(join(HOME, "covenant.log"))
+  ? readFileSync(join(HOME, "covenant.log"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+writeFileSync(join(OUT, "covenant.log"), deliveries.map((d) => JSON.stringify(d)).join("\n") + "\n");
+const ids = Object.fromEntries(q("SELECT id, harness FROM agents").map((a) => [a.id, a.harness]));
+const route = (harness) => deliveries.filter((d) => ids[d.agent] === harness && d.areas.includes("cart.js")).map((d) => d.route);
+const claudeVia = route("claude-code");
+const codexVia = route("codex");
+ok(claudeVia.length > 0, "the covenant's cart.js rules reached Claude", claudeVia.join(" + "));
+ok(codexVia.length > 0, "the covenant's cart.js rules reached Codex", codexVia.join(" + "));
+const result = q("SELECT result FROM tasks WHERE id = 1")[0]?.result ?? "";
+ok(result.includes("[covenant:cart]"), "Claude followed the covenant (tag in its task result)", result.slice(0, 90));
+ok(Boolean(done?.body.includes("[covenant:cart]")), "Codex followed the covenant (tag in its report)", done?.body.slice(0, 90));
 
 // --- material ---------------------------------------------------------------------
 writeFileSync(join(OUT, "messages.txt"), msgs.map((m) => `#${m.id} ${new Date(m.created_at).toISOString().slice(11, 19)} ${m.sender_name} → ${m.target}\n${m.body}\n`).join("\n"));

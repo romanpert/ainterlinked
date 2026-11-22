@@ -44,19 +44,19 @@ func ro() prop { return prop{"readOnlyHint": true} }
 func toolDefs() []tool {
 	return []tool{
 		{"whoami", "Your identity on the interlinked bus, unread count and who else is online in your project.", obj(prop{}), ro()},
-		{"list_agents", "List AI agents (any harness) online now: name, harness, project, branch, state, current activity.",
+		{"list_agents", "List AI agents (any harness) online now: name, harness, project, branch, state, current activity, and what each has done lately (facts, not a score).",
 			obj(prop{"project": str("Only this project name"), "harness": str("Only this harness, e.g. codex"), "include_offline": boo("Include agents seen in the last 7 days")}), ro()},
 		{"set_status", "Tell peers what you're doing. Call when you start/finish work or get blocked.",
 			obj(prop{"state": prop{"type": "string", "enum": core.States}, "activity": str("Short description of the current work"),
 				"role": str("Your role in the team, e.g. reviewer"), "name": str("Rename yourself, ideally after your task (old names keep reaching you)"),
 				"continue_as": str("Continue an offline agent of this checkout (after a restart or a switch of IDE/provider/account): take its name, unread mail, threads, tasks and reservations")}), nil},
-		{"send_message", "Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as one-line briefs unless urgent: put the point in the subject/first line. Omit to when replying.",
+		{"send_message", fmt.Sprintf("Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as each recipient chose (one-line briefs by default): put the point in the subject/first line. Broadcasts ('*', 'project', 'project:<name>', 'harness:<name>') come from a budget of %d that refills one every %d minutes; names, 'branch' and '#topic' are never limited. Omit to when replying.", core.BroadcastBurst, int(core.BroadcastRefill.Minutes())),
 			obj(prop{"to": str("Recipient(s)"), "body": str("Message text (max 16 KB; reference files by path)"), "subject": str("Optional short subject (shown in briefs)"),
-				"reply_to": num("Message id you're answering (keeps the thread)"), "urgent": boo("Everyone gets it in full and now; use rarely")}, "body"), nil},
+				"reply_to": num("The #number of the message you're answering (keeps the thread)"), "urgent": boo("Read first; it still follows each recipient's delivery choice (only the human's urgent mail overrides it)")}, "body"), nil},
 		{"read_inbox", "Read your unread messages (marks them read). all=true shows recent history; threads=true lists your recent conversations to pick one up again.",
 			obj(prop{"all": boo("Include already-read messages"), "limit": num("Max messages, default 20"), "threads": boo("List your recent threads instead")}), nil},
 		{"set_delivery", "Tune what peer mail costs your context. No arguments shows your settings and the project's topics.",
-			obj(prop{"broadcasts": prop{"type": "string", "enum": []string{core.ModeFull, core.ModeBrief, core.ModeOff}, "description": "Group messages: full, brief (one line, default) or off (urgent still arrives)"},
+			obj(prop{"broadcasts": prop{"type": "string", "enum": []string{core.ModeFull, core.ModeBrief, core.ModeOff}, "description": "Group messages: full, brief (one line, default) or off (only the human's urgent mail still arrives); group mail never holds your turn open"},
 				"inject":       prop{"type": "string", "enum": []string{core.InjectEveryTool, core.InjectTurn, core.InjectManual}, "description": "When mail enters your context: after tool calls, only at prompt/turn end, or never (you call read_inbox)"},
 				"max_messages": num("Messages per injection"), "max_chars": num("Characters per injection (500-40000)"),
 				"subscribe": strs("Topics to receive (send_message to='#topic'); 'name:brief' for one-line delivery"), "unsubscribe": strs("Topics to drop"),
@@ -74,14 +74,17 @@ func toolDefs() []tool {
 		{"list_boards", "List task boards with counts per status.", obj(prop{}), ro()},
 		{"claim_task", "Atomically take a todo task (no one else can take it). Without id, claims the most urgent ready task on the board.",
 			obj(prop{"id": num("Task id"), "board": str("Board for auto-pick"), "label": str("Only auto-pick tasks with this label")}), nil},
-		{"update_task", "Change a task: status (todo, doing, blocked, review, done, cancelled), result, title, body, priority or assignee ('me', a name, or '' to unassign). The creator is told when it's done or blocked.",
+		{"want_task", "Say you need a task someone else holds or that is waiting. One counter per agent; the holder sees the count, never a message per request. Use it instead of messaging the holder.",
+			obj(prop{"id": num("Task id")}, "id"), nil},
+		{"update_task", "Change a task: status (todo, doing, blocked, review, done, cancelled), result, title, body, priority or assignee ('me', a name, or '' to unassign). A task someone holds changes only by its holder, its creator or the human. The creator is told when it's done or blocked.",
 			obj(prop{"id": num("Task id"), "status": prop{"type": "string", "enum": core.TaskStatuses}, "result": str("Outcome / notes (when done or blocked)"),
 				"title": str("New title"), "body": str("New body"), "priority": num("0-3"), "assignee": str("Agent name, 'me' or ''")}, "id"), nil},
-		{"reserve_files", "Reserve files/folders before editing so other agents don't touch them (globs ok: src/api/**, *.md; trailing / = folder). Enforced on harnesses with edit hooks. Keep it short and narrow; release when done.",
+		{"reserve_files", "Claim files/folders ahead of editing them, e.g. for a refactor (globs ok: src/api/**, *.md; trailing / = folder), or queue for held ones with wait=true. With edit hooks you rarely need it: editing a file reserves it for you automatically (renewed by each edit), and your reservations lapse 15 min after your turn ends. Keep it narrow; release when done.",
 			obj(prop{"paths": strs("Paths relative to the project root"), "reason": str("Why (defaults to the task title)"), "ttl_minutes": num("Default 30"),
 				"wait": boo("If held, queue: it becomes yours, and you're told, when the holder lets go"),
 				"task": num("Board task this is for: claims it if free; the reservation ends when it's done")}, "paths"), nil},
-		{"release_files", "Release your file reservations (all of them if paths is omitted) and your queue places for them; the next in line gets them.", obj(prop{"paths": strs("Patterns to release")}), nil},
+		{"release_files", "Release your file reservations (all of them if paths is omitted) and your queue places for them; the next in line gets them. With to, hand them instead to an agent queued for them (any of them, not only the first): they keep what's left of your term.",
+			obj(prop{"paths": strs("Patterns to release"), "to": str("Agent queued for them to hand them to")}), nil},
 		{"list_reservations", "Show active file reservations and the queue in your project.", obj(prop{"all_projects": boo("Every project")}), ro()},
 		{"activity_feed", "Recent bus activity: joins, status changes, messages, tasks, reservations.",
 			obj(prop{"limit": num("Default 30"), "project": str("Only this project")}), ro()},
@@ -118,8 +121,15 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		}
 	}
 	get := func(k string, v any) {
-		if r, ok := a[k]; ok {
-			_ = json.Unmarshal(r, v)
+		r, ok := a[k]
+		if !ok || json.Unmarshal(r, v) == nil {
+			return
+		}
+		// A number sent as text ("#1037", "1037") still counts: models copy
+		// ids as they see them.
+		var s string
+		if json.Unmarshal(r, &s) == nil {
+			_ = json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(s), "#")), v)
 		}
 	}
 	c := s.client
@@ -186,7 +196,13 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		if err := c.Call(ctx, "agents", f, &list); err != nil {
 			return "", err
 		}
-		return render.Agents(list, me), nil
+		names := make([]string, 0, len(list))
+		for _, a := range list {
+			names = append(names, a.Name)
+		}
+		var facts map[string]core.Facts
+		_ = c.Call(ctx, "facts", hub.FactsParam{Viewer: me, Names: names}, &facts) // an older hub has none: the list still stands
+		return render.Agents(list, me) + render.FactsBlock(list, facts), nil
 	case "set_status":
 		r := core.StatusReq{ID: me}
 		get("state", &r.State)
@@ -326,6 +342,14 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			return "Nothing ready to claim on that board.", nil
 		}
 		return "claimed " + render.Task(*r.Task), nil
+	case "want_task":
+		var id int64
+		get("id", &id)
+		var t core.Task
+		if err := c.Call(ctx, "task_want", hub.ClaimParam{Agent: me, ID: id}, &t); err != nil {
+			return "", err
+		}
+		return "noted: " + render.Task(t), nil
 	case "update_task":
 		u := core.TaskUpdate{By: me}
 		get("id", &u.ID)
@@ -386,9 +410,13 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 	case "release_files":
 		p := hub.ReleaseParam{Agent: me}
 		get("paths", &p.Paths)
+		get("to", &p.To)
 		var r hub.ReleaseResult
 		if err := c.Call(ctx, "release", p, &r); err != nil {
 			return "", err
+		}
+		if p.To != "" {
+			return fmt.Sprintf("ceded %d reservation(s) to %s", r.Released, p.To), nil
 		}
 		return fmt.Sprintf("released %d reservation(s)", r.Released), nil
 	case "list_reservations":

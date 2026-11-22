@@ -139,7 +139,16 @@ var patchFile = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)
 
 // EditedFiles extracts the files an edit-like tool call would touch.
 func EditedFiles(in Input) []string {
-	if in.ToolInput == nil || !editTool.MatchString(in.ToolName) {
+	if !editTool.MatchString(in.ToolName) {
+		return nil
+	}
+	return ToolFiles(in)
+}
+
+// ToolFiles extracts the files any tool call names (reads included),
+// relative paths resolved from the tool's working directory.
+func ToolFiles(in Input) []string {
+	if in.ToolInput == nil {
 		return nil
 	}
 	var out []string
@@ -168,6 +177,11 @@ func EditedFiles(in Input) []string {
 			for _, mm := range patchFile.FindAllStringSubmatch(v, -1) {
 				add(mm[1] + mm[2])
 			}
+		}
+	}
+	for i, f := range out {
+		if !filepath.IsAbs(f) && in.Cwd != "" {
+			out[i] = filepath.Join(in.Cwd, f)
 		}
 	}
 	return out
@@ -299,6 +313,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 			return Result{}, err
 		}
 		// /clear, compaction or a resume end a session that goes straight on.
+		forgetShown(me.ID)
 		return Result{}, hub.Depart(ctx, c, me.ID)
 	}
 	if err := c.Call(ctx, "register", reg, &me); err != nil {
@@ -315,7 +330,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if !d.OnSessionStart || !ctxOK {
 			return Result{}, nil
 		}
-		return Result{Context: briefing(ctx, c, me, d, prefs())}, nil
+		return Result{Context: briefing(ctx, c, me, cfg, prefs())}, nil
 
 	case Prompt:
 		// Only a real user prompt resets the auto-continue budget. Prompts we
@@ -339,21 +354,31 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 
 	case PreTool:
 		files := EditedFiles(in)
-		if len(files) == 0 || cfg.Locks.Enforce == "off" {
+		if len(files) == 0 {
 			return Result{}, nil
 		}
 		for _, f := range files {
-			var l *core.Lock
-			// The project path is canonical (session.Detect), so the file must be too.
-			if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: session.Canonical(f)}, &l); err != nil || l == nil {
+			if cfg.Locks.Enforce == "off" {
+				break
+			}
+			l, err := touchFile(ctx, c, me.ID, f)
+			if err != nil || l == nil {
 				continue
 			}
-			msg := fmt.Sprintf("interlinked: %s is reserved by %s (their stated reason: %q; expires in %s). Queue for it with reserve_files wait=true (it becomes yours, and you're told, when they let go), or work on something else meanwhile.",
-				f, l.Agent, orNo(l.Reason), time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute))
+			term := "expires in " + time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute).String()
+			if l.LapsesAt > 0 {
+				term = "they're idle; it lapses in " + time.Until(time.UnixMilli(l.LapsesAt)).Round(time.Minute).String()
+			}
+			msg := fmt.Sprintf("interlinked: %s is reserved by %s (their stated reason: %q; %s). Queue for it with reserve_files wait=true (it becomes yours, and you're told, when they let go), or work on something else meanwhile.",
+				relDisplay(me.ProjectPath, f), l.Agent, orNo(l.Reason), term)
 			if cfg.Locks.Enforce == "warn" {
 				return Result{Warn: msg}, nil
 			}
 			return Result{Deny: msg}, nil
+		}
+		// Not someone else's: the owner's rules for the area, once.
+		if note := covenantNotice(cfg, me.ID, me.ProjectPath, files, true); note != "" {
+			return Result{Deny: note}, nil
 		}
 		return Result{}, nil
 
@@ -361,13 +386,21 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if cfg.Presence.TrackActivity {
 			_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activityFromTool(in, sc.ProjectPath), Quiet: true}, nil)
 		}
+		// A shell write to someone else's file: the holder is told and a task
+		// opened even where this harness can't show the writer anything.
+		var alert string
+		if cfg.Locks.Enforce != "off" {
+			alert = trespass(ctx, c, me, in)
+		}
 		if !ctxOK {
 			return Result{}, nil
 		}
+		// A file just read or edited: its area's rules, before the next edit.
+		parts := []string{alert, covenantNotice(cfg, me.ID, me.ProjectPath, ToolFiles(in), false)}
 		if p := prefs(); ShouldInject(p, d, AtTool) {
-			return Result{Context: Inject(ctx, c, me.ID, d, p, "", false)}, nil
+			parts = append(parts, Inject(ctx, c, me.ID, d, p, "", false))
 		}
-		return Result{}, nil
+		return Result{Context: joinNonEmpty(parts, "\n\n")}, nil
 
 	case Stop:
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "idle", Quiet: true}, nil)
@@ -378,8 +411,9 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if !ShouldInject(p, d, AtStop) {
 			return Result{}, nil
 		}
-		// Only mail meant for this agent in full (named, urgent, a full-mode
-		// topic) keeps the turn going; group briefs wait for the next turn.
+		// Only mail addressed to this agent by name keeps the turn going: a
+		// held turn costs a whole model turn, and that is the recipient's to
+		// give. Group mail, even urgent or in full, waits for the next turn.
 		text := Inject(ctx, c, me.ID, d, p, "New messages from peer agents arrived while you were finishing. Handle them (reply with send_message if useful), then stop.\n\n", true)
 		if text == "" {
 			return Result{}, nil
@@ -389,6 +423,21 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		return Result{Block: text}, nil
 	}
 	return Result{}, nil
+}
+
+// touchFile asks whether f is someone else's; the hub also reserves it for
+// the agent editing it (reservations follow the work). An older remote hub
+// without touch_file still answers the question through check_file.
+func touchFile(ctx context.Context, c hub.Client, agent, f string) (*core.Lock, error) {
+	var l *core.Lock
+	// The project path is canonical (session.Detect), so the file must be too.
+	p := hub.FileParam{Agent: agent, File: session.Canonical(f)}
+	err := c.Call(ctx, "touch_file", p, &l)
+	if err != nil && strings.Contains(err.Error(), "unknown method") {
+		l = nil
+		err = c.Call(ctx, "check_file", p, &l)
+	}
+	return l, err
 }
 
 // MaxHolds caps automatic continuations (stop-holds, OpenCode wake-ups,
@@ -418,6 +467,16 @@ func BumpHolds(id string) {
 func ResetHolds(id string) { _ = os.Remove(holdsPath(id)) }
 
 func holdsPath(id string) string { return filepath.Join(config.Home(), "holds", filepath.Base(id)) }
+
+func joinNonEmpty(parts []string, sep string) string {
+	var keep []string
+	for _, p := range parts {
+		if p != "" {
+			keep = append(keep, p)
+		}
+	}
+	return strings.Join(keep, sep)
+}
 
 func orNo(s string) string {
 	if s == "" {
@@ -482,22 +541,23 @@ const maxBriefs = 10
 // Inject returns unread messages formatted for a model and marks exactly
 // those read: full mail first (within the agent's message and character
 // limits), then group briefs in what's left. Whatever doesn't fit stays
-// unread for the next injection. fullOnly leaves the briefs alone.
-func Inject(ctx context.Context, c hub.Client, me string, d config.Delivery, p core.Prefs, lead string, fullOnly bool) string {
+// unread for the next injection. directOnly takes only mail addressed to
+// the agent by name (what may hold its turn) and leaves the rest unread.
+func Inject(ctx context.Context, c hub.Client, me string, d config.Delivery, p core.Prefs, lead string, directOnly bool) string {
 	var u hub.UnreadResult
-	if err := c.Call(ctx, "unread", hub.AgentParam{Agent: me}, &u); err != nil || u.Total == 0 || (fullOnly && u.Full == 0) {
+	if err := c.Call(ctx, "unread", hub.AgentParam{Agent: me}, &u); err != nil || u.Total == 0 || (directOnly && u.Direct == 0) {
 		return ""
 	}
 	limit, budget := Limits(p, d)
 	var msgs []core.Message
 	spent := 0
 	if u.Full > 0 {
-		_ = c.Call(ctx, "inbox", core.InboxReq{Agent: me, Limit: limit, Mode: core.ModeFull, Budget: budget}, &msgs)
+		_ = c.Call(ctx, "inbox", core.InboxReq{Agent: me, Limit: limit, Mode: core.ModeFull, Direct: directOnly, Budget: budget}, &msgs)
 		for _, m := range msgs {
 			spent += core.Cost(m)
 		}
 	}
-	if !fullOnly && u.Total > u.Full && len(msgs) < limit+maxBriefs {
+	if !directOnly && u.Total > u.Full && len(msgs) < limit+maxBriefs {
 		left := budget - spent
 		if n := min(maxBriefs, left/core.Cost(core.Message{Mode: core.ModeBrief})); n > 0 {
 			var briefs []core.Message
@@ -517,14 +577,15 @@ func Inject(ctx context.Context, c hub.Client, me string, d config.Delivery, p c
 	if rest := u.Total - len(msgs); rest > 0 {
 		fmt.Fprintf(&b, "\n(+%d more unread: read_inbox; set_delivery tunes how much reaches you)", rest)
 	}
-	b.WriteString("\nReply with the interlinked send_message tool (reply_to=<id>) only if it helps.")
+	b.WriteString("\nReply with the interlinked send_message tool (reply_to = the message's #number) only if it helps.")
 	return b.String()
 }
 
 // briefingPeers caps the peers listed when a session starts.
 const briefingPeers = 8
 
-func briefing(ctx context.Context, c hub.Client, me core.Agent, d config.Delivery, p core.Prefs) string {
+func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Config, p core.Prefs) string {
+	d := cfg.Delivery
 	var peers []core.Agent
 	_ = c.Call(ctx, "agents", core.AgentFilter{}, &peers)
 	var b strings.Builder
@@ -544,6 +605,7 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, d config.Deliver
 		fmt.Fprintf(&b, " %d other agent(s) online:\n%s", others, render.Briefing(peers, me, briefingPeers))
 	}
 	b.WriteString(boardLine(ctx, c, me, inProject))
+	b.WriteString(covenantBrief(cfg, me.ID, me.ProjectPath))
 	if core.IsAutoName(me.Name, me.Harness, me.Project) && inProject > 0 {
 		b.WriteString("\nName yourself after your task (set_status name=<alias>) so peers can address you; a later session, in any IDE, picks your work up with set_status continue_as=<alias>.")
 	}

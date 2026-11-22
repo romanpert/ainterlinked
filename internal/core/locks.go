@@ -24,6 +24,58 @@ type Lock struct {
 	TaskID      int64  `json:"task_id,omitempty"` // released when that task is done or cancelled
 	CreatedAt   int64  `json:"created_at"`
 	ExpiresAt   int64  `json:"expires_at"`
+	// LapsesAt is when it stops applying because its holder's turn ended
+	// (see IdleLapse) or it went unused (see UseWindow); 0 when neither applies.
+	LapsesAt int64 `json:"lapses_at,omitempty"`
+	// UsedAt is the last edit inside it (or when it was made); explicit
+	// reservations lapse UseWindow after it.
+	UsedAt int64 `json:"used_at,omitempty"`
+	// Terms are the conditions the holder accepted by reserving it.
+	Terms string `json:"terms,omitempty"`
+}
+
+// An explicit reservation is a lease on terms stated when it is made. One
+// file is individual use: it keeps its TTL (and the idle lapse). A folder, a
+// glob or the whole project fences off what others may need, so it lasts
+// while it is used: it lapses after a window without edits inside it, shorter
+// the more it covers. Each edit inside it, or reserving it again, renews it;
+// its TTL still caps it. Automatic reservations (made by editing) keep AutoLease.
+const (
+	FolderUse  = 30 * time.Minute // a folder or a glob
+	ProjectUse = 10 * time.Minute // the whole project (**)
+)
+
+// UseWindow is how long pattern stays reserved without an edit inside it
+// (0: a single file, which only its TTL and the idle lapse end).
+func UseWindow(pattern string) time.Duration {
+	switch {
+	case pattern == "**":
+		return ProjectUse
+	case strings.ContainsAny(pattern, "*?["):
+		return FolderUse
+	}
+	return 0
+}
+
+func leaseTerms(pattern string, expiresAt int64) string {
+	until := time.UnixMilli(expiresAt).Format("15:04")
+	if w := UseWindow(pattern); w > 0 {
+		return fmt.Sprintf("covers more than one file, so it lapses after %s without edits in it (editing inside it or reserving again renews it); ends at %s at the latest", w, until)
+	}
+	return fmt.Sprintf("held until %s; it lapses earlier if your turn ends and you stay idle for %s", until, IdleLapse)
+}
+
+// unusedAt is when an explicit reservation lapses for lack of use (0 for
+// automatic ones, which renew by editing anyway).
+func unusedAt(l Lock) int64 {
+	if l.Reason == autoReason || UseWindow(l.Pattern) == 0 {
+		return 0
+	}
+	used := l.UsedAt
+	if used < l.CreatedAt {
+		used = l.CreatedAt
+	}
+	return used + UseWindow(l.Pattern).Milliseconds()
 }
 
 // LockReq reserves one or more path patterns (relative to the project root;
@@ -50,11 +102,11 @@ type LockResult struct {
 	Task      *Task    `json:"task,omitempty"`
 }
 
-const lockColsL = `l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.task_id,l.created_at,l.expires_at`
+const lockColsL = `l.id,l.project_path,l.pattern,l.agent_id,l.agent_name,l.reason,l.task_id,l.created_at,l.expires_at,l.used_at`
 
 func scanLock(r scanner) (Lock, error) {
 	var l Lock
-	err := r.Scan(&l.ID, &l.ProjectPath, &l.Pattern, &l.AgentID, &l.Agent, &l.Reason, &l.TaskID, &l.CreatedAt, &l.ExpiresAt)
+	err := r.Scan(&l.ID, &l.ProjectPath, &l.Pattern, &l.AgentID, &l.Agent, &l.Reason, &l.TaskID, &l.CreatedAt, &l.ExpiresAt, &l.UsedAt)
 	return l, err
 }
 
@@ -172,19 +224,28 @@ func (s *Store) liveLocks(ctx context.Context, q interface {
 }, projectPath string) ([]Lock, error) {
 	// "online" is decided by reap (heartbeat or live harness process); callers
 	// reap first so a dead agent's reservations don't count.
-	rows, err := q.QueryContext(ctx, `SELECT `+lockColsL+`
+	rows, err := q.QueryContext(ctx, `SELECT `+lockColsL+`, a.via, a.state, a.state_since
 		FROM locks l JOIN agents a ON a.id=l.agent_id
-		WHERE l.project_path=? AND l.expires_at>? AND a.online=1`,
-		projectPath, s.ms())
+		WHERE (?='' OR l.project_path=?) AND l.expires_at>? AND a.online=1 ORDER BY l.project_path, l.pattern`,
+		projectPath, projectPath, s.ms())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Lock
 	for rows.Next() {
-		l, err := scanLock(rows)
-		if err != nil {
+		var l Lock
+		var via, state string
+		var since int64
+		if err := rows.Scan(&l.ID, &l.ProjectPath, &l.Pattern, &l.AgentID, &l.Agent, &l.Reason, &l.TaskID, &l.CreatedAt, &l.ExpiresAt, &l.UsedAt,
+			&via, &state, &since); err != nil {
 			return nil, err
+		}
+		if at := lapses(via, state, since); at > 0 && l.CreatedAt <= since && at < l.ExpiresAt {
+			l.LapsesAt = at
+		}
+		if at := unusedAt(l); at > 0 && at < l.ExpiresAt && (l.LapsesAt == 0 || at < l.LapsesAt) {
+			l.LapsesAt = at
 		}
 		out = append(out, l)
 	}
@@ -266,14 +327,19 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			// Refresh our own identical reservation instead of duplicating it.
 			_, _ = tx.Exec(`DELETE FROM locks WHERE agent_id=? AND project_path=? AND pattern=?`, me.ID, me.ProjectPath, pat)
 			_, _ = tx.Exec(`DELETE FROM waiters WHERE agent_id=? AND project_path=? AND pattern=?`, me.ID, me.ProjectPath, pat)
-			out, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,task_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
-				me.ProjectPath, pat, me.ID, me.Name, oneLine(r.Reason, 200), r.Task, now, now+ttl.Milliseconds())
+			reason := oneLine(r.Reason, 200)
+			if reason == autoReason {
+				reason = "reserved" // the automatic marker is not for explicit leases
+			}
+			out, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,task_id,created_at,expires_at,used_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+				me.ProjectPath, pat, me.ID, me.Name, reason, r.Task, now, now+ttl.Milliseconds(), now)
 			if err != nil {
 				return err
 			}
 			id, _ := out.LastInsertId()
 			res.Granted = append(res.Granted, Lock{ID: id, ProjectPath: me.ProjectPath, Pattern: pat, AgentID: me.ID, Agent: me.Name,
-				Reason: oneLine(r.Reason, 200), TaskID: r.Task, CreatedAt: now, ExpiresAt: now + ttl.Milliseconds()})
+				Reason: reason, TaskID: r.Task, CreatedAt: now, ExpiresAt: now + ttl.Milliseconds(), UsedAt: now,
+				Terms: leaseTerms(pat, now+ttl.Milliseconds())})
 		}
 		if len(res.Granted) > 0 {
 			pats := make([]string, len(res.Granted))
@@ -345,24 +411,7 @@ func (s *Store) Locks(ctx context.Context, projectPath string) ([]Lock, error) {
 	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err
 	}
-	if projectPath != "" {
-		return s.liveLocks(ctx, s.db, projectPath)
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+lockColsL+`
-		FROM locks l JOIN agents a ON a.id=l.agent_id WHERE l.expires_at>? AND a.online=1 ORDER BY l.project_path, l.pattern`, s.ms())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Lock
-	for rows.Next() {
-		l, err := scanLock(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
+	return s.liveLocks(ctx, s.db, projectPath) // "" = every project
 }
 
 // CheckFile returns the reservation held by another agent that covers file,

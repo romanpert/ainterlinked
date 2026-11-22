@@ -47,7 +47,7 @@ Star counts and activity come from secondary sources as of 2026.
 2. **Messages that arrive.** Hooks inject mail into the model's context and hold the stop while new mail is waiting, with a cap against ping-pong loops. `wait_for_messages` covers everything else.
 3. **One model for the four primitives.** Presence with live activity, threaded mail, task boards with atomic claims and dependencies, and file reservations that are enforced through pre-tool hooks.
 4. **One-command wiring of 13 harnesses**, with format-preserving edits, backups, `--dry-run` and a full uninstall.
-5. **A single static binary.** No daemon, no Python or Node at run time. SQLite WAL locally, with optional `serve` for many machines.
+5. **A single static binary.** No daemon, no Python or Node at run time. SQLite WAL on the machine, nothing listening on the network.
 
 ## Risks
 

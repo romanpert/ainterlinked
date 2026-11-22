@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Task is an item on a shared board.
@@ -27,6 +28,53 @@ type Task struct {
 	CreatedAt   int64    `json:"created_at"`
 	UpdatedAt   int64    `json:"updated_at"`
 	Blocked     bool     `json:"blocked_by_deps,omitempty"`
+	// Wanted is how many other agents said they need this task (WantTask).
+	Wanted int `json:"wanted,omitempty"`
+	// Terms are the conditions the holder accepted by claiming it.
+	Terms string `json:"terms,omitempty"`
+}
+
+// Tasks are property. A held task (it has an assignee) belongs to its
+// holder; its creator and the human keep a say over it. Anyone else may only
+// claim a free task, or say they need one with WantTask: a deduplicated
+// counter on the task, never a stream of messages that would push the holder
+// to rush the work or fill its context.
+//
+// A holder offline for longer than AbandonAfter is no longer using the task:
+// it goes back to todo, with its body and result kept, and the holder is told
+// when it comes back. Claiming states these terms up front.
+const AbandonAfter = 30 * time.Minute
+
+var claimTerms = fmt.Sprintf("yours while you use it: only you, its creator or the human change it; if you are offline for over %s it goes back to todo (notes kept)", AbandonAfter)
+
+func isHuman(a Agent) bool { return a.Harness == "human" }
+
+// mayChange reports whether by may change t beyond claiming it.
+func mayChange(t Task, by Agent) bool {
+	switch {
+	case isHuman(by), t.AssigneeID == by.ID, t.CreatedByID == by.ID:
+		return true
+	case t.AssigneeID != "":
+		return false
+	}
+	return t.CreatedByID == "" // a free task with no known creator is anyone's to edit
+}
+
+// ownerOf names who decides about t, for error messages.
+func ownerOf(t Task) string {
+	if t.Assignee != "" {
+		return t.Assignee
+	}
+	return t.CreatedBy
+}
+
+// isClaim reports whether u, on the free task t, only takes it for by.
+func isClaim(u TaskUpdate, t Task, assignee *Agent, by Agent) bool {
+	if t.AssigneeID != "" || t.Status != "todo" || u.Title != "" || u.Body != nil || u.Priority != nil || u.Result != "" {
+		return false
+	}
+	toMe := assignee != nil && assignee.ID == by.ID
+	return (u.Status == "doing" && (assignee == nil || toMe)) || (u.Status == "" && toMe)
 }
 
 // TaskStatuses in board order.
@@ -108,6 +156,9 @@ func (s *Store) CreateTask(ctx context.Context, r TaskReq) (Task, error) {
 	if strings.TrimSpace(r.Title) == "" {
 		return Task{}, errors.New("title is required")
 	}
+	if err := checkLabels(r.Labels); err != nil {
+		return Task{}, err
+	}
 	by, err := s.Get(ctx, r.By)
 	if err != nil {
 		return Task{}, err
@@ -168,6 +219,9 @@ type TaskFilter struct {
 
 // ListTasks returns tasks ordered by status, priority and age.
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
+	if err := s.tx(ctx, s.abandon); err != nil {
+		return nil, err
+	}
 	q := `SELECT ` + taskCols + ` FROM tasks WHERE 1=1`
 	var args []any
 	var me Agent
@@ -211,8 +265,28 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 		out = append(out, t)
 	}
 	rows.Close()
+	wanted := map[int64]int{}
+	wr, err := s.db.QueryContext(ctx, `SELECT task_id, count(*) FROM task_wants GROUP BY task_id`)
+	if err != nil {
+		return nil, err
+	}
+	for wr.Next() {
+		var id int64
+		var n int
+		if err := wr.Scan(&id, &n); err != nil {
+			wr.Close()
+			return nil, err
+		}
+		wanted[id] = n
+	}
+	if err := wr.Err(); err != nil {
+		wr.Close()
+		return nil, err
+	}
+	wr.Close()
 	for i := range out {
 		out[i].Blocked = s.depsPending(ctx, nil, out[i].DependsOn)
+		out[i].Wanted = wanted[out[i].ID]
 	}
 	return out, nil
 }
@@ -269,11 +343,27 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 		}
 		assignee = &a
 	}
+	cur, err := scanTask(s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id=?`, u.ID))
+	if err != nil {
+		return Task{}, fmt.Errorf("no task #%d", u.ID)
+	}
+	if !mayChange(cur, by) {
+		if isClaim(u, cur, assignee, by) {
+			return s.Claim(ctx, by.ID, u.ID)
+		}
+		return Task{}, fmt.Errorf("task #%d belongs to %s: only its holder, its creator or the human can change it. If you need it done, want_task records that (one counter the holder sees, no messages)", u.ID, ownerOf(cur))
+	}
+	if err := settleRule(cur, by, u.Status, assignee != nil); err != nil {
+		return Task{}, err
+	}
 	var before, out Task
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, u.ID))
 		if err != nil {
 			return fmt.Errorf("no task #%d", u.ID)
+		}
+		if t.AssigneeID != cur.AssigneeID && !mayChange(t, by) {
+			return fmt.Errorf("task #%d changed hands meanwhile; it is now %s's", u.ID, t.Assignee)
 		}
 		before = t
 		if u.Status != "" {
@@ -320,6 +410,9 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 			if _, err := tx.Exec(`DELETE FROM waiters WHERE task_id=?`, t.ID); err != nil {
 				return err
 			}
+			if _, err := tx.Exec(`DELETE FROM task_wants WHERE task_id=?`, t.ID); err != nil {
+				return err
+			}
 			if err := s.promote(tx); err != nil {
 				return err
 			}
@@ -353,6 +446,9 @@ func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error)
 	}
 	var out Task
 	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if err := s.abandon(tx); err != nil {
+			return err
+		}
 		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
 		if err != nil {
 			return fmt.Errorf("no task #%d", id)
@@ -384,7 +480,103 @@ func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error)
 		out, err = scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
 		return err
 	})
+	if err == nil {
+		out.Terms = claimTerms
+	}
 	return out, err
+}
+
+// wantStep reports whether n is a count at which the holder hears how many
+// want its task: 1, 3, 9, 27… so even 100 000 requests make about ten notices.
+func wantStep(n int) bool {
+	for s := 1; s <= n; s *= 3 {
+		if s == n {
+			return true
+		}
+	}
+	return false
+}
+
+// WantTask records that agent needs task id done. Each agent counts once per
+// task; the holder sees the count on the task and gets a one-line notice only
+// at geometric steps, never one message per request.
+func (s *Store) WantTask(ctx context.Context, agent string, id int64) (Task, error) {
+	me, err := s.Get(ctx, agent)
+	if err != nil {
+		return Task{}, err
+	}
+	var out Task
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
+		if err != nil {
+			return fmt.Errorf("no task #%d", id)
+		}
+		switch {
+		case t.Status == "done" || t.Status == "cancelled":
+			return fmt.Errorf("task #%d is already %s", id, t.Status)
+		case t.AssigneeID == me.ID:
+			return fmt.Errorf("task #%d is yours", id)
+		}
+		now := s.ms()
+		res, err := tx.Exec(`INSERT OR IGNORE INTO task_wants(task_id,agent_id,created_at) VALUES(?,?,?)`, id, me.ID, now)
+		if err != nil {
+			return err
+		}
+		added, _ := res.RowsAffected()
+		if err := tx.QueryRow(`SELECT count(*) FROM task_wants WHERE task_id=?`, id).Scan(&t.Wanted); err != nil {
+			return err
+		}
+		if added > 0 && t.AssigneeID != "" && wantStep(t.Wanted) {
+			notice(tx, now, Agent{ID: t.AssigneeID, Name: t.Assignee}, fmt.Sprintf("#%d is wanted", id),
+				fmt.Sprintf("%d agent(s) are waiting on #%d %q. Nothing to answer: doing it well is the reply.", t.Wanted, id, t.Title))
+		}
+		out = t
+		return nil
+	})
+	return out, err
+}
+
+// abandon returns to todo the tasks in progress whose holder has been offline
+// for over AbandonAfter (or is gone), keeping their body and result, and
+// tells the holder for when it comes back.
+func (s *Store) abandon(tx *sql.Tx) error {
+	if err := s.reap(tx); err != nil { // offline means what it means everywhere else
+		return err
+	}
+	now := s.ms()
+	rows, err := tx.Query(`SELECT t.id, t.title, t.assignee_id, t.assignee FROM tasks t LEFT JOIN agents a ON a.id=t.assignee_id
+		WHERE t.status='doing' AND t.assignee_id<>'' AND (a.id IS NULL OR (a.online=0 AND a.last_seen<?))`, now-AbandonAfter.Milliseconds())
+	if err != nil {
+		return err
+	}
+	type held struct {
+		id                int64
+		title, aid, aname string
+	}
+	var list []held
+	for rows.Next() {
+		var h held
+		if err := rows.Scan(&h.id, &h.title, &h.aid, &h.aname); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, h)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, h := range list {
+		if _, err := tx.Exec(`UPDATE tasks SET status='todo', assignee_id='', assignee='', updated_at=? WHERE id=? AND status='doing'`, now, h.id); err != nil {
+			return err
+		}
+		who := Agent{ID: h.aid, Name: h.aname}
+		notice(tx, now, who, fmt.Sprintf("#%d back to todo", h.id),
+			fmt.Sprintf("Task #%d %q went back to todo: you were offline for over %s. Its notes and result are kept; claim it again if it is still free.", h.id, h.title, AbandonAfter))
+		event(tx, now, &who, "task", fmt.Sprintf("#%d back to todo: %s offline for over %s", h.id, h.aname, AbandonAfter))
+	}
+	return nil
 }
 
 // taskForReservation checks that me may reserve files for task id, claiming

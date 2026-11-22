@@ -6,26 +6,36 @@ import (
 	"testing"
 )
 
-func TestSaveLoadAndEnvNotPersisted(t *testing.T) {
+func TestSaveLoad(t *testing.T) {
 	t.Setenv("INTERLINKED_HOME", t.TempDir())
 	cfg := Default()
 	cfg.Harnesses["codex"] = HarnessCfg{Enabled: false}
 	if err := Save(cfg); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("INTERLINKED_HUB", "http://elsewhere:7717")
-	t.Setenv("INTERLINKED_TOKEN", "secret")
 	got, err := Load()
-	if err != nil || got.Hub != "http://elsewhere:7717" || got.HarnessEnabled("codex") {
+	if err != nil || got.HarnessEnabled("codex") || got.OldHub != "" {
 		t.Fatalf("load: %+v %v", got, err)
 	}
-	file, _ := LoadFile()
-	if file.Hub != "" || file.Token != "" {
-		t.Fatal("environment overrides must not leak into what gets saved")
+}
+
+// A hub URL (and token) from a version that joined other machines is
+// noticed, not used, and gone after the next save.
+func TestOldRemoteHubIsIgnored(t *testing.T) {
+	t.Setenv("INTERLINKED_HOME", t.TempDir())
+	if err := os.WriteFile(Path(), []byte("hub = \"http://elsewhere:7717\"\ntoken = \"secret\"\nmachine = \"box\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil || got.OldHub != "http://elsewhere:7717" || got.Machine != "box" {
+		t.Fatalf("load: %+v %v", got, err)
+	}
+	if err := Save(got); err != nil {
+		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(Path())
-	if strings.Contains(string(b), "secret") {
-		t.Fatal("token from the environment was written to disk")
+	if strings.Contains(string(b), "elsewhere") || strings.Contains(string(b), "secret") {
+		t.Fatalf("saving drops the old hub and token:\n%s", b)
 	}
 }
 
