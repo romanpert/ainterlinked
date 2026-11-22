@@ -72,6 +72,7 @@ type Server struct {
 	nextID     int
 	channel    bool // push messages as claude/channel notifications
 	disabled   bool
+	stopLoad   context.CancelFunc // set while this session publishes the machine's load
 }
 
 // New creates a server for harness ("" = infer from the client name).
@@ -360,7 +361,6 @@ func (s *Server) register() error {
 	s.mu.Unlock()
 	s.bgOnce.Do(func() {
 		go s.heartbeat()
-		go s.machineLoop()
 		if s.channel {
 			go s.pushLoop()
 		}

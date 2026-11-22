@@ -159,7 +159,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 type state struct {
 	Machine   string          `json:"machine"`
-	Load      *core.Machine   `json:"load,omitempty"` // nil: no sample yet
+	Load      *core.Machine   `json:"load,omitempty"` // nil: no session publishes it
 	Version   string          `json:"version"`
 	Agents    []core.Agent    `json:"agents"`
 	Tasks     []core.Task     `json:"tasks"`
@@ -185,7 +185,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	_ = c.Call(ctx, "feed", core.FeedReq{Limit: 80}, &out.Feed)
 	out.Harnesses = s.harnesses()
 	var m core.Machine
-	if err := c.Call(ctx, "machine", hub.Empty{}, &m); err == nil && m.SampledAt > 0 {
+	if err := c.Call(ctx, "machine", hub.Empty{}, &m); err == nil && m.Fresh {
 		out.Load = &m
 	}
 	if out.Agents == nil {

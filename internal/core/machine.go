@@ -3,27 +3,19 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
-// This machine's load, as one row the hub keeps current. Reading counters is
-// the cheap part; what matters is that only one process does it: the
-// sampler holds a short lease, renewed with every sample, and anyone may
-// take it over once it lapses (the sampler's session ended).
-const (
-	SampleEvery  = 5 * time.Second
-	samplerLease = 3 * SampleEvery
-	// MachineFresh: an older sample is shown as stale (no sampler running:
-	// no session with an MCP server is open).
-	MachineFresh = 30 * time.Second
-	// cpuAvgWindow is the span the smoothed CPU figure follows.
-	cpuAvgWindow = time.Minute
-)
+// This machine's load, as one row. Nobody reads counters unless the user
+// asks a session to: that session then publishes, at the interval the user
+// gave, for as long as it is open. Everything else follows from that
+// interval: a figure stands until the publisher has missed a beat, and no
+// longer than its session.
 
-// Machine is this machine's last sampled load.
+// Machine is this machine's last published load.
 type Machine struct {
-	CPU       float64 `json:"cpu"`     // % of all cores at the last sample; -1 unknown
-	CPUAvg    float64 `json:"cpu_avg"` // smoothed over about a minute; -1 unknown
+	CPU       float64 `json:"cpu"` // % of all cores since the previous sample; -1 unknown
 	Approx    bool    `json:"approx,omitempty"`
 	MemTotal  uint64  `json:"mem_total"`
 	MemAvail  uint64  `json:"mem_avail"`
@@ -31,102 +23,93 @@ type Machine struct {
 	DiskFree  uint64  `json:"disk_free"`
 	Cores     int     `json:"cores"`
 	SampledAt int64   `json:"sampled_at"`
-	Sampler   string  `json:"sampler,omitempty"` // the agent whose session samples
-	Fresh     bool    `json:"fresh"`
+	Sampler   string  `json:"sampler,omitempty"`      // the publishing agent
+	By        string  `json:"sampler_name,omitempty"` // its name
+	Fresh     bool    `json:"fresh"`                  // the publisher's term still stands
 }
 
-// MachineSample is one reading reported by the sampling agent.
+// MachineSample is one reading an agent publishes.
 type MachineSample struct {
 	Agent     string  `json:"agent"`
-	CPU       float64 `json:"cpu"` // -1: not measured yet (the sampler is priming)
+	EveryMS   int64   `json:"every_ms"` // the publisher's interval
+	CPU       float64 `json:"cpu"`      // -1: not measured
 	Approx    bool    `json:"approx,omitempty"`
 	MemTotal  uint64  `json:"mem_total"`
 	MemAvail  uint64  `json:"mem_avail"`
 	DiskTotal uint64  `json:"disk_total"`
 	DiskFree  uint64  `json:"disk_free"`
 	Cores     int     `json:"cores"`
+	Stop      bool    `json:"stop,omitempty"` // stop publishing; the figures are ignored
 }
 
 // SampleResult says whether the sample was taken: false means another
-// session holds the sampler's lease, and the caller should stop sampling.
+// session (By) publishes, or no interval was given.
 type SampleResult struct {
-	Taken bool `json:"taken"`
+	Taken bool   `json:"taken"`
+	By    string `json:"by,omitempty"`
 }
 
-// Machine returns the last sample.
+// maxSampleEvery keeps a nonsensical interval from overflowing the term.
+const maxSampleEvery = 365 * 24 * time.Hour
+
+// Machine returns the last published load.
 func (s *Store) Machine(ctx context.Context) (Machine, error) {
-	var m Machine
-	var approx int
-	err := s.db.QueryRowContext(ctx, `SELECT cpu,cpu_avg,approx,mem_total,mem_avail,disk_total,disk_free,cores,sampled_at,sampler_id
-		FROM machine WHERE id=1`).Scan(&m.CPU, &m.CPUAvg, &approx, &m.MemTotal, &m.MemAvail, &m.DiskTotal, &m.DiskFree, &m.Cores, &m.SampledAt, &m.Sampler)
-	if err == sql.ErrNoRows {
-		return Machine{CPU: -1, CPUAvg: -1}, nil
+	m := Machine{CPU: -1}
+	var approx, online int
+	var until int64
+	err := s.db.QueryRowContext(ctx, `SELECT m.cpu,m.approx,m.mem_total,m.mem_avail,m.disk_total,m.disk_free,m.cores,m.sampled_at,m.sampler_id,m.lease_until,
+		COALESCE(a.name,''),COALESCE(a.online,0) FROM machine m LEFT JOIN agents a ON a.id=m.sampler_id WHERE m.id=1`).
+		Scan(&m.CPU, &approx, &m.MemTotal, &m.MemAvail, &m.DiskTotal, &m.DiskFree, &m.Cores, &m.SampledAt, &m.Sampler, &until, &m.By, &online)
+	if errors.Is(err, sql.ErrNoRows) {
+		return m, nil
 	}
 	m.Approx = approx == 1
-	m.Fresh = m.SampledAt > 0 && s.ms()-m.SampledAt < MachineFresh.Milliseconds()
+	m.Fresh = online == 1 && s.ms() < until
 	return m, err
 }
 
-// SamplerFree reports whether agent may sample now: it holds the lease, or
-// the lease has lapsed.
-func (m Machine) SamplerFree(agent string, now time.Time) bool {
-	return m.Sampler == agent || now.UnixMilli()-m.SampledAt >= samplerLease.Milliseconds()
-}
-
-// SampleMachine records r if its agent holds the sampler's lease or the
-// lease has lapsed, and renews the lease. A priming sample (CPU < 0) keeps
-// the previous CPU figures.
+// SampleMachine publishes r, or stops publishing. One agent publishes at a
+// time: another takes over once the publisher stops, leaves or lets its term
+// lapse.
 func (s *Store) SampleMachine(ctx context.Context, r MachineSample) (SampleResult, error) {
-	if r.CPU > 100 {
-		r.CPU = 100
-	}
-	if r.MemAvail > r.MemTotal {
-		r.MemAvail = r.MemTotal
-	}
-	if r.DiskFree > r.DiskTotal {
-		r.DiskFree = r.DiskTotal
-	}
 	var out SampleResult
+	if r.EveryMS > maxSampleEvery.Milliseconds() {
+		return out, errors.New("the interval is too long")
+	}
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.ms()
-		var holder string
-		var at int64
-		var avg float64
-		if err := tx.QueryRow(`SELECT sampler_id, sampled_at, cpu_avg FROM machine WHERE id=1`).Scan(&holder, &at, &avg); err != nil {
+		var holder, name string
+		var until int64
+		var online int
+		if err := tx.QueryRow(`SELECT m.sampler_id, m.lease_until, COALESCE(a.name,''), COALESCE(a.online,0)
+			FROM machine m LEFT JOIN agents a ON a.id=m.sampler_id WHERE m.id=1`).Scan(&holder, &until, &name, &online); err != nil {
 			return err
 		}
-		if holder != r.Agent && now-at < samplerLease.Milliseconds() {
-			return nil // another session samples
+		live := online == 1 && now < until
+		mine := holder == r.Agent && live
+		if r.Stop {
+			if !mine {
+				return nil
+			}
+			out.Taken = true
+			_, err := tx.Exec(`UPDATE machine SET sampler_id='', lease_until=0 WHERE id=1`)
+			return err
+		}
+		if live && !mine {
+			out.By = name
+			return nil
+		}
+		if r.EveryMS <= 0 {
+			return nil // no term, no publication (a session older than publishing on request)
 		}
 		out.Taken = true
-		cpu, approx := r.CPU, 0
+		cpu, approx := min(r.CPU, 100), 0
 		if r.Approx {
 			approx = 1
 		}
-		if cpu < 0 {
-			if now-at >= MachineFresh.Milliseconds() {
-				// The old figures are from a sampler long gone: unknown, not stale-as-current.
-				if _, err := tx.Exec(`UPDATE machine SET cpu=-1, cpu_avg=-1 WHERE id=1`); err != nil {
-					return err
-				}
-			}
-			_, err := tx.Exec(`UPDATE machine SET mem_total=?, mem_avail=?, disk_total=?, disk_free=?, cores=?, sampled_at=?, sampler_id=?, lease_until=? WHERE id=1`,
-				r.MemTotal, r.MemAvail, r.DiskTotal, r.DiskFree, r.Cores, now, r.Agent, now+samplerLease.Milliseconds())
-			return err
-		}
-		// Exponential moving average over about cpuAvgWindow, weighted by the
-		// time since the last sample (a gap counts for more).
-		if avg < 0 || at == 0 {
-			avg = cpu
-		} else {
-			w := float64(now-at) / float64(cpuAvgWindow.Milliseconds())
-			if w > 1 {
-				w = 1
-			}
-			avg += w * (cpu - avg)
-		}
-		_, err := tx.Exec(`UPDATE machine SET cpu=?, cpu_avg=?, approx=?, mem_total=?, mem_avail=?, disk_total=?, disk_free=?, cores=?, sampled_at=?, sampler_id=?, lease_until=? WHERE id=1`,
-			cpu, avg, approx, r.MemTotal, r.MemAvail, r.DiskTotal, r.DiskFree, r.Cores, now, r.Agent, now+samplerLease.Milliseconds())
+		// Stands until the next sample is a whole interval late.
+		_, err := tx.Exec(`UPDATE machine SET cpu=?, cpu_avg=-1, approx=?, mem_total=?, mem_avail=?, disk_total=?, disk_free=?, cores=?, sampled_at=?, sampler_id=?, lease_until=? WHERE id=1`,
+			cpu, approx, r.MemTotal, min(r.MemAvail, r.MemTotal), r.DiskTotal, min(r.DiskFree, r.DiskTotal), r.Cores, now, r.Agent, now+2*r.EveryMS)
 		return err
 	})
 	return out, err

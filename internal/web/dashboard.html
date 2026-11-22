@@ -162,12 +162,12 @@ function renderBoard(tasks, boards) {
   }).join("");
 }
 const gb = (n) => { const g = n / 2 ** 30; return (g >= 100 ? g.toFixed(0) : g.toFixed(1)) + " GB"; };
-// This machine's load: shown only while a session samples it (an old figure would mislead).
+// This machine's load, while a session the user asked publishes it.
 function loadSpans(m) {
-  if (!m || !m.fresh) return `<span title="No session is sampling the load">load <b>–</b></span>`;
+  if (!m) return "";
   const cpu = m.cpu < 0 ? "…" : (m.approx ? "~" : "") + Math.round(m.cpu) + "%";
-  const avg = m.cpu_avg >= 0 && !m.approx ? ` title="1-minute average ${Math.round(m.cpu_avg)}%"` : "";
-  return `<span${avg}>CPU <b>${cpu}</b> of ${m.cores} cores</span>` +
+  const by = ` title="published by ${esc(m.sampler_name)}, ${ago(m.sampled_at)} ago"`;
+  return `<span${by}>CPU <b>${cpu}</b> of ${m.cores} cores</span>` +
     `<span>memory <b>${gb(m.mem_avail)}</b> free of ${gb(m.mem_total)}</span>` +
     `<span>disk <b>${gb(m.disk_free)}</b> free of ${gb(m.disk_total)}</span>`;
 }

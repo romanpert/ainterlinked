@@ -7,8 +7,8 @@ import (
 	"github.com/romanpert/ainterlinked/internal/core"
 )
 
-// Machine renders this machine's load as one line, or "" when no fresh
-// sample exists (no session is sampling): an old figure would mislead.
+// Machine renders this machine's load as one line, or "" when no session
+// publishes it.
 func Machine(m core.Machine) string {
 	if !m.Fresh {
 		return ""
@@ -16,15 +16,11 @@ func Machine(m core.Machine) string {
 	parts := []string{}
 	switch {
 	case m.CPU < 0:
-		parts = append(parts, "CPU measuring")
+		parts = append(parts, "CPU unknown")
 	case m.Approx:
 		parts = append(parts, fmt.Sprintf("CPU ~%.0f%% (load average)", m.CPU))
 	default:
-		cpu := fmt.Sprintf("CPU %.0f%%", m.CPU)
-		if m.CPUAvg >= 0 {
-			cpu += fmt.Sprintf(" (1m avg %.0f%%)", m.CPUAvg)
-		}
-		parts = append(parts, cpu)
+		parts = append(parts, fmt.Sprintf("CPU %.0f%%", m.CPU))
 	}
 	if m.Cores > 0 {
 		parts = append(parts, fmt.Sprintf("%d cores", m.Cores))
@@ -35,7 +31,7 @@ func Machine(m core.Machine) string {
 	if m.DiskTotal > 0 {
 		parts = append(parts, fmt.Sprintf("disk %s free of %s", gb(m.DiskFree), gb(m.DiskTotal)))
 	}
-	return "This machine: " + strings.Join(parts, " · ")
+	return fmt.Sprintf("This machine (by %s, %s ago): %s", m.By, Ago(m.SampledAt), strings.Join(parts, " · "))
 }
 
 func gb(n uint64) string {

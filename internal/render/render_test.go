@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/romanpert/ainterlinked/internal/core"
 )
@@ -19,15 +20,16 @@ func TestPeerMessagesLeadWithTheIdAndFenceTheBody(t *testing.T) {
 	}
 }
 
-func TestMachineIsOneLineOnlyWhenFresh(t *testing.T) {
-	m := core.Machine{CPU: 42.4, CPUAvg: 35, Cores: 12, MemTotal: 32 << 30, MemAvail: 12 << 30, DiskTotal: 512 << 30, DiskFree: 120 << 30, Fresh: true}
-	want := "This machine: CPU 42% (1m avg 35%) · 12 cores · memory 12.0 GB free of 32.0 GB · disk 120 GB free of 512 GB"
+func TestMachineIsOneLineOnlyWhilePublished(t *testing.T) {
+	m := core.Machine{CPU: 42.4, Cores: 12, MemTotal: 32 << 30, MemAvail: 12 << 30, DiskTotal: 512 << 30, DiskFree: 120 << 30,
+		By: "claude@shop", SampledAt: time.Now().UnixMilli() - 4200, Fresh: true}
+	want := "This machine (by claude@shop, 4s ago): CPU 42% · 12 cores · memory 12.0 GB free of 32.0 GB · disk 120 GB free of 512 GB"
 	if got := Machine(m); got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
-	m.CPU, m.CPUAvg = -1, -1
-	if got := Machine(m); !strings.HasPrefix(got, "This machine: CPU measuring · 12 cores") {
-		t.Fatalf("priming: %q", got)
+	m.CPU = -1
+	if got := Machine(m); !strings.Contains(got, "CPU unknown · 12 cores") {
+		t.Fatalf("unknown: %q", got)
 	}
 	m.CPU, m.Approx = 80, true
 	if got := Machine(m); !strings.Contains(got, "CPU ~80% (load average)") {
@@ -35,6 +37,6 @@ func TestMachineIsOneLineOnlyWhenFresh(t *testing.T) {
 	}
 	m.Fresh = false
 	if got := Machine(m); got != "" {
-		t.Fatalf("a stale sample is not shown: %q", got)
+		t.Fatalf("not published: %q", got)
 	}
 }

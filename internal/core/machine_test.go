@@ -2,64 +2,72 @@ package core
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 )
 
-// One session samples at a time; another takes over only once the lease
-// lapses. The first sample of a new sampler primes (CPU unknown) without
-// passing off a long-gone sampler's CPU as current.
-func TestOneSamplerAtATime(t *testing.T) {
+// Nothing is published until an agent does, on the interval it declares; one
+// publishes at a time, and the figure stands no longer than its term or its
+// session.
+func TestLoadIsPublishedOnTheTermsThePublisherDeclares(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	if m, _ := s.Machine(ctx); m.Fresh || m.CPU != -1 {
-		t.Fatalf("no sample yet: %+v", m)
+	a := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 11})
+	b := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 22})
+	if m, err := s.Machine(ctx); err != nil || m.Fresh || m.CPU != -1 {
+		t.Fatalf("nothing published: %+v %v", m, err)
 	}
-	sample := func(agent string, cpu float64) bool {
+	const every = 7 * time.Second // whatever the user said
+	publish := func(agent string, every time.Duration) SampleResult {
 		t.Helper()
-		r, err := s.SampleMachine(ctx, MachineSample{Agent: agent, CPU: cpu, MemTotal: 64, MemAvail: 20, DiskTotal: 100, DiskFree: 40, Cores: 12})
+		r, err := s.SampleMachine(ctx, MachineSample{Agent: agent, EveryMS: every.Milliseconds(), CPU: 140, MemTotal: 64, MemAvail: 70, DiskTotal: 100, DiskFree: 40, Cores: 12})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return r.Taken
+		return r
 	}
-	if !sample("a", -1) {
-		t.Fatal("a free lease is taken")
+	if publish(a.ID, 0).Taken {
+		t.Fatal("no interval, no publication: we don't pick one")
 	}
-	if m, _ := s.Machine(ctx); !m.Fresh || m.CPU != -1 || m.MemAvail != 20 || m.Sampler != "a" {
-		t.Fatalf("priming records memory and disk, CPU still unknown: %+v", m)
+	if !publish(a.ID, every).Taken {
+		t.Fatal("a publishes")
 	}
-	now = now.Add(SampleEvery)
-	if sample("b", 50) {
-		t.Fatal("b must not sample while a holds the lease")
+	if m, _ := s.Machine(ctx); !m.Fresh || m.CPU != 100 || m.MemAvail != 64 || m.Sampler != a.ID || m.By != a.Name {
+		t.Fatalf("published, clamped: %+v", m)
 	}
-	if !sample("a", 80) {
-		t.Fatal("the holder renews")
+	if r := publish(b.ID, every); r.Taken || r.By != a.Name {
+		t.Fatalf("a publishes already: %+v", r)
 	}
-	if m, _ := s.Machine(ctx); m.CPU != 80 || m.CPUAvg != 80 {
-		t.Fatalf("first measured sample: %+v", m)
+	now = now.Add(2*every - time.Millisecond)
+	if m, _ := s.Machine(ctx); !m.Fresh {
+		t.Fatalf("the term stands: %+v", m)
 	}
-	now = now.Add(30 * time.Second) // half the averaging window
-	sample("a", 20)
-	if m, _ := s.Machine(ctx); m.CPU != 20 || math.Abs(m.CPUAvg-50) > 0.01 {
-		t.Fatalf("the average moves by the time elapsed: %+v", m)
-	}
-
-	now = now.Add(samplerLease) // a's session ended
-	if m, _ := s.Machine(ctx); !m.SamplerFree("b", now) || m.SamplerFree("b", now.Add(-time.Second)) {
-		t.Fatalf("the lease lapses %s after the last sample: %+v", samplerLease, m)
-	}
-	now = now.Add(MachineFresh - samplerLease)
+	now = now.Add(time.Millisecond)
 	if m, _ := s.Machine(ctx); m.Fresh {
-		t.Fatalf("a sample older than %s is stale: %+v", MachineFresh, m)
+		t.Fatalf("a whole interval late: %+v", m)
 	}
-	if !sample("b", -1) {
-		t.Fatal("b takes over a lapsed lease")
+	if !publish(b.ID, every).Taken {
+		t.Fatal("b takes over a lapsed term")
 	}
-	if m, _ := s.Machine(ctx); m.CPU != -1 || m.CPUAvg != -1 || m.Sampler != "b" {
-		t.Fatalf("a long-gone sampler's CPU is not shown as current: %+v", m)
+	if r, _ := s.SampleMachine(ctx, MachineSample{Agent: a.ID, Stop: true}); r.Taken {
+		t.Fatal("a can't stop b")
+	}
+	if r, _ := s.SampleMachine(ctx, MachineSample{Agent: b.ID, Stop: true}); !r.Taken {
+		t.Fatal("b stops")
+	}
+	if m, _ := s.Machine(ctx); m.Fresh {
+		t.Fatalf("stopped: %+v", m)
+	}
+	publish(a.ID, time.Hour)
+	if err := s.Leave(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := s.Machine(ctx); m.Fresh {
+		t.Fatalf("the figure doesn't outlive its publisher's session: %+v", m)
+	}
+	if !publish(b.ID, every).Taken {
+		t.Fatal("b needn't wait out the term of an agent that left")
 	}
 }

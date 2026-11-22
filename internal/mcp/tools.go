@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/hub"
@@ -49,7 +50,8 @@ func toolDefs() []tool {
 		{"set_status", "Tell peers what you're doing. Call when you start/finish work or get blocked.",
 			obj(prop{"state": prop{"type": "string", "enum": core.States}, "activity": str("Short description of the current work"),
 				"role": str("Your role in the team, e.g. reviewer"), "name": str("Rename yourself, ideally after your task (old names keep reaching you)"),
-				"continue_as": str("Continue an offline agent of this checkout (after a restart or a switch of IDE/provider/account): take its name, unread mail, threads, tasks and reservations")}), nil},
+				"continue_as":        str("Continue an offline agent of this checkout (after a restart or a switch of IDE/provider/account): take its name, unread mail, threads, tasks and reservations"),
+				"share_load_seconds": num("Only if the user asks: publish this machine's CPU, memory and disk every N seconds while this session is open; 0 stops")}), nil},
 		{"send_message", fmt.Sprintf("Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as each recipient chose (one-line briefs by default): put the point in the subject/first line. Broadcasts ('*', 'project', 'project:<name>', 'harness:<name>') come from a budget of %d that refills one every %d minutes; names, 'branch' and '#topic' are never limited. Omit to when replying.", core.BroadcastBurst, int(core.BroadcastRefill.Minutes())),
 			obj(prop{"to": str("Recipient(s)"), "body": str("Message text (max 16 KB; reference files by path)"), "subject": str("Optional short subject (shown in briefs)"),
 				"reply_to": num("The #number of the message you're answering (keeps the thread)"), "urgent": boo("Read first; it still follows each recipient's delivery choice (only the human's urgent mail overrides it)")}, "body"), nil},
@@ -202,16 +204,14 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		}
 		var facts map[string]core.Facts
 		_ = c.Call(ctx, "facts", hub.FactsParam{Viewer: me, Names: names}, &facts) // an older hub has none: the list still stands
-		out := render.Agents(list, me) + render.FactsBlock(list, facts)
-		var m core.Machine
-		if c.Call(ctx, "machine", hub.Empty{}, &m) == nil {
-			if line := render.Machine(m); line != "" {
-				out += "\n" + line
-			}
-		}
-		return out, nil
+		return render.Agents(list, me) + render.FactsBlock(list, facts) + s.loadLine(ctx), nil
 	case "set_status":
 		r := core.StatusReq{ID: me}
+		var share *float64
+		get("share_load_seconds", &share)
+		if share != nil && *share != 0 && (*share < 1 || *share > maxShareSeconds) {
+			return "", errors.New("share_load_seconds is 1 or more (0 stops)")
+		}
 		get("state", &r.State)
 		get("activity", &r.Activity)
 		get("role", &r.Role)
@@ -234,6 +234,13 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			if len(mine) > 0 {
 				msg += "\n" + render.Tasks(mine)
 			}
+		}
+		if share != nil {
+			line, err := s.shareLoad(ctx, time.Duration(*share*float64(time.Second)))
+			if err != nil {
+				return "", fmt.Errorf("%s, but the load isn't published: %w", msg, err)
+			}
+			msg += "\n" + line
 		}
 		return msg, nil
 	case "send_message":
@@ -455,9 +462,18 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		if err := c.Call(ctx, "feed", r, &list); err != nil {
 			return "", err
 		}
-		return render.Feed(list), nil
+		return render.Feed(list) + s.loadLine(ctx), nil
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
+}
+
+// loadLine is this machine's load as its own line, or "" when no session publishes it.
+func (s *Server) loadLine(ctx context.Context) string {
+	var m core.Machine
+	if s.client.Call(ctx, "machine", hub.Empty{}, &m) != nil {
+		return ""
+	}
+	return prefixed("\n", render.Machine(m))
 }
 
 func (s *Server) prefsLine(p core.Prefs) string {

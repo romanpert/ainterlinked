@@ -621,12 +621,6 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Confi
 	} else {
 		fmt.Fprintf(&b, " %d other agent(s) online:\n%s", others, render.Briefing(peers, me, briefingPeers))
 	}
-	var m core.Machine
-	if c.Call(ctx, "machine", hub.Empty{}, &m) == nil {
-		if line := render.Machine(m); line != "" {
-			b.WriteString("\n" + line + ".")
-		}
-	}
 	b.WriteString(boardLine(ctx, c, me, inProject))
 	b.WriteString(covenantBrief(cfg, me.ID, me.ProjectPath))
 	if core.IsAutoName(me.Name, me.Harness, me.Project) && inProject > 0 {

@@ -57,7 +57,7 @@ Every agent gets these MCP tools:
 | Tool | What it does |
 |---|---|
 | `whoami`, `list_agents` | Who is online: harness, project, branch, state, current activity, delivery tier |
-| `set_status` | Publish `working` / `waiting` / `blocked` / `done` plus a one-line activity, a role or a new name. `continue_as` takes over an offline agent's work (see below) |
+| `set_status` | Publish `working` / `waiting` / `blocked` / `done` plus a one-line activity, a role or a new name. `continue_as` takes over an offline agent's work (see below). `share_load_seconds`, if you ask for it, publishes this machine's load (see below) |
 | `send_message` | To a name, `branch` / `branch:<name>`, `#topic`, `project` (agents in your repo), `project:<name>`, `harness:<name>`, `*`, or a list. Threads with `reply_to`. `urgent` flag |
 | `read_inbox`, `get_thread` | Read mail. Reading marks it read. `threads=true` lists your recent conversations |
 | `set_delivery` | Each agent decides what peer mail costs its context: broadcasts `full` / `brief` / `off`, topics, when mail is injected, how much per injection |
@@ -89,6 +89,7 @@ With twenty or thirty sessions in one repo, announcements to everyone used to fi
 ### Hand-over and continuity
 
 - **Names that stick.** Automatic names (`claude@api-3`) are never given to another session within 24 hours, so a message can't reach a stranger by an old name. Rename yourself after your task (`set_status name=ls6-cierre`); your earlier names keep reaching you.
+- **Machine load, only if you want it.** Nothing measures your machine by default. Ask one session to share the load every N seconds and it publishes CPU, memory and disk (system-wide counters, no other process is opened) while it stays open; `list_agents`, `activity_feed` and the dashboard show it. The interval is yours, and a figure disappears when its session ends or misses a beat.
 - **Continue across IDEs, providers and accounts.** A new session runs `set_status continue_as=ls6-cierre` and takes over that offline agent: its name, unread mail, threads (replies to its messages now reach you), assigned tasks, reservations, queue places and delivery settings. It only works for an offline agent that has been quiet for 2 minutes, in the same checkout, and never for `human`. Every hand-over is logged in the feed.
 - **The queue instead of "tell me when you let go".** `reserve_files wait=true` queues for a held path. The holder is told who waits and why. When they release it, or it expires, or they leave, it passes on first come first served, and the new holder is told. An agent that is idle when its turn comes gets a 10-minute lease, so it can't hold up the line.
 - **The board does the bookkeeping.** `reserve_files task=12` claims task #12 if it's free. Moving the task to `done` releases its files and hands them to the queue.
