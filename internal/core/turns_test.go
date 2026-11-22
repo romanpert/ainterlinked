@@ -66,7 +66,9 @@ func TestTheTranscriptNotTheHookSaysTheUserPrompted(t *testing.T) {
 		t.Fatal(err)
 	}
 	lock := held.Granted[0].ID
-	dir := filepath.Join(t.TempDir(), ".claude", "projects", "c--api")
+	config := filepath.Join(t.TempDir(), ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", config) // Claude Code's own directory, for this test
+	dir := filepath.Join(config, "projects", "c--api")
 	_ = os.MkdirAll(dir, 0o700)
 	path := filepath.Join(dir, sid+".jsonl")
 	prompt := func(at time.Time) {
@@ -92,7 +94,10 @@ func TestTheTranscriptNotTheHookSaysTheUserPrompted(t *testing.T) {
 	if l := label(true, path); l != LabelRestitution {
 		t.Fatalf("a self-reported prompt passed for the user's: %s", l)
 	}
-	fake := filepath.Join(t.TempDir(), sid+".jsonl") // its own "transcript", in the repo
+	// Its own "transcript" in the repo, laid out like Claude Code's tree.
+	fakeDir := filepath.Join(t.TempDir(), "repo", "projects", "c--api")
+	_ = os.MkdirAll(fakeDir, 0o700)
+	fake := filepath.Join(fakeDir, sid+".jsonl")
 	data, _ := os.ReadFile(path)
 	_ = os.WriteFile(fake, append(data, []byte(fmt.Sprintf(`{"type":"user","timestamp":%q,"origin":{"kind":"human"}}`+"\n", time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)))...), 0o600)
 	if l := label(true, fake); l != LabelRestitution {

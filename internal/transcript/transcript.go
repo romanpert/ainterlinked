@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -26,14 +27,17 @@ type Origin struct {
 const Budget = 64 << 20
 
 // Read returns the latest turn's origin in the session's transcript. known
-// is false when interlinked can't read this harness's transcripts; a path
-// that doesn't belong to the session is known with no user prompt in it.
-func Read(harness, path, session string) (o Origin, known bool) {
+// is false when ainterlinked can't read this harness's transcripts. The
+// file is looked up under the harness's own directory; hint (the path a
+// hook reported) only saves the lookup when it is that very file. With no
+// such file, the answer is known, with no user prompt.
+func Read(harness, hint, session string) (o Origin, known bool) {
 	r, ok := readers[harness]
 	if !ok {
 		return Origin{}, false
 	}
-	if !r.owns(path, session) {
+	path := r.find(hint, session)
+	if path == "" {
 		return Origin{}, true
 	}
 	f, err := os.Open(path)
@@ -69,23 +73,84 @@ const (
 )
 
 type reader struct {
-	owns     func(path, session string) bool
+	find     func(hint, session string) string
 	classify func(line []byte) (int64, kind)
 }
 
 var readers = map[string]reader{
-	"claude-code": {owns: claudeOwns, classify: claudeLine},
+	"claude-code": {find: claudeFind, classify: claudeLine},
 }
 
-// claudeOwns: Claude Code keeps a session at
-// <config>/projects/<project>/<session id>.jsonl.
-func claudeOwns(path, session string) bool {
-	if !safeID(session) || !filepath.IsAbs(path) {
-		return false
+// claudeRoots are Claude Code's configuration directories: CLAUDE_CONFIG_DIR
+// when set (as the hub process found it), and ~/.claude.
+func claudeRoots() []string {
+	var out []string
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(d) {
+		out = append(out, d)
 	}
-	path = filepath.Clean(path)
-	return filepath.Base(path) == session+".jsonl" &&
-		filepath.Base(filepath.Dir(filepath.Dir(path))) == "projects"
+	if h, err := os.UserHomeDir(); err == nil {
+		out = append(out, filepath.Join(h, ".claude"))
+	}
+	return out
+}
+
+// claudeFind returns the session's transcript, which Claude Code keeps at
+// <config>/projects/<project>/<session id>.jsonl. Only a regular file there,
+// symlinks resolved, counts: a copy anywhere else (in a repo, where an agent
+// writes freely, even under a directory it named "projects") is never read.
+func claudeFind(hint, session string) string {
+	if !safeID(session) {
+		return ""
+	}
+	name := session + ".jsonl"
+	for _, root := range claudeRoots() {
+		projects, err := filepath.EvalSymlinks(filepath.Join(root, "projects"))
+		if err != nil {
+			continue
+		}
+		if filepath.IsAbs(hint) && filepath.Base(hint) == name {
+			if p := inside(projects, hint); p != "" {
+				return p
+			}
+		}
+		best, newest := "", time.Time{}
+		matches, _ := filepath.Glob(filepath.Join(projects, "*", name))
+		for _, m := range matches {
+			if p := inside(projects, m); p != "" {
+				if fi, err := os.Stat(p); err == nil && fi.ModTime().After(newest) {
+					best, newest = p, fi.ModTime()
+				}
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+	return ""
+}
+
+// inside returns path with symlinks resolved when it is a regular file in a
+// project directory directly under projects, else "".
+func inside(projects, path string) string {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	if !samePath(filepath.Dir(filepath.Dir(real)), projects) {
+		return ""
+	}
+	fi, err := os.Lstat(real)
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	return real
+}
+
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b) // case-insensitive file systems
+	}
+	return a == b
 }
 
 // claudeLine: Claude Code marks the entry that starts a turn with its

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const sid = "5c29bfbf-c9fa-48af-977a-f512d1660cea"
+const sid = "00000000-test-4000-8000-transcript01"
 
 var t0 = time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
 
@@ -35,7 +35,9 @@ func assistant(min int) string {
 
 func write(t *testing.T, lines ...string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), ".claude", "projects", "c--proj")
+	config := filepath.Join(t.TempDir(), ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", config) // Claude Code's own directory, for this test
+	dir := filepath.Join(config, "projects", "c--proj")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +77,42 @@ func TestOnlyTheSessionsOwnTranscriptCounts(t *testing.T) {
 	if o, known := Read("claude-code", p, "another-session"); !known || o.User != 0 {
 		t.Fatalf("another session's transcript was believed: %+v", o)
 	}
-	// A copy outside Claude Code's projects tree (say, in the repo).
-	fake := filepath.Join(t.TempDir(), sid+".jsonl")
-	data, _ := os.ReadFile(p)
-	_ = os.WriteFile(fake, data, 0o600)
-	if o, known := Read("claude-code", fake, sid); !known || o.User != 0 {
-		t.Fatalf("a transcript outside the harness's tree was believed: %+v", o)
-	}
 	if _, known := Read("aider", p, sid); known {
 		t.Fatal("a harness without a reader must say so")
+	}
+	// The hub finds the session's file itself: no hint needed.
+	if o, _ := Read("claude-code", "", sid); o.User == 0 {
+		t.Fatal("the session's own transcript wasn't found")
+	}
+}
+
+// A forged transcript in the repo (where an agent writes freely), even laid
+// out like Claude Code's tree, is never read; nor is one a link in Claude
+// Code's tree points to.
+func TestAForgedTranscriptIsNeverRead(t *testing.T) {
+	forged := strings.Join([]string{human(1, "go"), human(9, "the agent's own words")}, "\n") + "\n"
+	config := filepath.Join(t.TempDir(), ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	_ = os.MkdirAll(filepath.Join(config, "projects"), 0o700)
+	repo := filepath.Join(t.TempDir(), "repo", "projects", "c--proj")
+	_ = os.MkdirAll(repo, 0o700)
+	fake := filepath.Join(repo, sid+".jsonl")
+	_ = os.WriteFile(fake, []byte(forged), 0o600)
+	if o, known := Read("claude-code", fake, sid); !known || o.User != 0 {
+		t.Fatalf("a transcript in the repo was believed: %+v", o)
+	}
+	// A project directory in Claude Code's tree that is a link to the repo.
+	if err := os.Symlink(repo, filepath.Join(config, "projects", "c--linked")); err == nil {
+		if o, _ := Read("claude-code", filepath.Join(config, "projects", "c--linked", sid+".jsonl"), sid); o.User != 0 {
+			t.Fatalf("a linked directory was followed: %+v", o)
+		}
+	}
+	// A file in Claude Code's tree that is a link to the repo's.
+	_ = os.MkdirAll(filepath.Join(config, "projects", "c--real"), 0o700)
+	if err := os.Symlink(fake, filepath.Join(config, "projects", "c--real", sid+".jsonl")); err == nil {
+		if o, _ := Read("claude-code", "", sid); o.User != 0 {
+			t.Fatalf("a linked file was followed: %+v", o)
+		}
 	}
 }
 
