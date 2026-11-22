@@ -53,3 +53,8 @@ func startDetached(cmd *exec.Cmd) error {
 	}
 	return err
 }
+
+// noWindow runs a console program without opening a window for it.
+func noWindow(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
+}

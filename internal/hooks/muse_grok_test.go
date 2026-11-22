@@ -3,6 +3,7 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,6 +70,7 @@ func TestGrokMailWaitsForAnEventThatShowsIt(t *testing.T) {
 // not register as a Claude session.
 func TestClaudeHooksRunByGrokStaySilent(t *testing.T) {
 	e := setup(t)
+	insideGrok(t, true)
 	e.as("1", "claude-code", "SessionStart", nil)
 	before := e.agent("1")
 	t.Setenv("GROK_HOOK_EVENT", "session_start")
@@ -77,10 +79,50 @@ func TestClaudeHooksRunByGrokStaySilent(t *testing.T) {
 	if out.Len() != 0 {
 		t.Fatalf("output: %s", out.String())
 	}
-	if !borrowed("cursor") || borrowed("grok") {
-		t.Fatal("only Grok's own hooks run under Grok")
-	}
 	if after := e.agent("1"); after.ID != before.ID {
 		t.Fatal("a second agent was registered")
+	}
+}
+
+// insideGrok: the hook runs under Grok, whose own hook file is wired or not.
+func insideGrok(t *testing.T, wired bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("GROK_HOOK_EVENT", "pre_tool_use")
+	old := anchorName
+	anchorName = func() string { return "grok" }
+	t.Cleanup(func() { anchorName = old })
+	if !wired {
+		return
+	}
+	dir := filepath.Join(home, ".grok", "hooks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ainterlinked.json"), []byte(`{"hooks":{"Stop":[{"hooks":[{"command":"ainterlinked hook grok Stop"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The hooks that keep agents off each other's files aren't switched off by
+// an environment variable, nor by Grok having no hooks of its own.
+func TestABorrowedHookStillEnforces(t *testing.T) {
+	setup(t)
+	insideGrok(t, true)
+	if as, run := runsAs("claude-code"); run {
+		t.Fatalf("Grok's own hooks do the work: ran as %q", as)
+	}
+	if as, run := runsAs("grok"); !run || as != "grok" {
+		t.Fatal("Grok's own hook must run")
+	}
+	insideGrok(t, false)
+	if as, run := runsAs("claude-code"); !run || as != "grok" {
+		t.Fatalf("with nothing wired in Grok, the hook acts as Grok's: %q %v", as, run)
+	}
+	anchorName = func() string { return "claude" }
+	if as, run := runsAs("claude-code"); !run || as != "claude-code" {
+		t.Fatalf("the variable alone changes nothing: %q %v", as, run)
 	}
 }

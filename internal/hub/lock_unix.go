@@ -36,3 +36,5 @@ func detach(cmd *exec.Cmd) {
 }
 
 func startDetached(cmd *exec.Cmd) error { return cmd.Start() }
+
+func noWindow(*exec.Cmd) {}

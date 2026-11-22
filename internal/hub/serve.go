@@ -43,6 +43,8 @@ type Server struct {
 	// spender reads harnesses' transcripts for spend, each once and then
 	// only what's new: the hub process lives long enough for that.
 	spender *transcript.Spender
+
+	wakeIdle atomic.Bool // the user's delivery.wake_idle
 }
 
 // NewServer serves st.

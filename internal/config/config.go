@@ -45,6 +45,10 @@ type Delivery struct {
 	// its size and a pointer (get_thread); the reader pulls the rest only if
 	// it wants it. Each agent can change it (set_delivery inline_chars).
 	InlineChars int `toml:"inline_chars"`
+	// WakeIdle starts a turn in an idle Claude Code or Codex session when mail
+	// addressed to it by name arrives (Limits.MaxHolds times between two of
+	// the user's prompts). Off: that turn is the user's money.
+	WakeIdle bool `toml:"wake_idle"`
 }
 
 // Presence controls heartbeats and activity tracking.

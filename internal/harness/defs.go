@@ -41,6 +41,9 @@ var claudeHooks = []hookSpec{
 	{Event: "SessionEnd"},
 }
 
+// claudeWake waits in the background of an idle session (hooks.Wait).
+var claudeWake = hookSpec{Event: "Stop", Rewake: "Wake", Timeout: 24 * 3600}
+
 func claudeCode() *Harness {
 	settings := func(e *Env) string { return e.path(".claude", "settings.json") }
 	userJSON := func(e *Env) string { return e.path(".claude.json") }
@@ -67,7 +70,11 @@ func claudeCode() *Harness {
 				jsonServer(t, userJSON(e), []string{"mcpServers"}, entry(e))
 			}
 			t.EditJSON(settings(e), func(old []byte) ([]byte, error) {
-				out, err := setClaudeStyleHooks(old, e, "claude-code", claudeHooks, 15, false)
+				specs := claudeHooks
+				if e.WakeIdle {
+					specs = append(append([]hookSpec{}, claudeHooks...), claudeWake)
+				}
+				out, err := setClaudeStyleHooks(old, e, "claude-code", specs, 15, false)
 				if err != nil {
 					return nil, err
 				}

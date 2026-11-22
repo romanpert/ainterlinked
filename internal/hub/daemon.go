@@ -78,6 +78,7 @@ func RunDaemon(ctx context.Context, cfg config.Config) error {
 		ln.Close()
 	}()
 	go srv.watch(ctx, cancel)
+	go srv.wakeLoop(ctx)
 	return srv.Serve(ctx, ln)
 }
 
@@ -129,8 +130,8 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 	}
 }
 
-// followLimits applies the user's [limits] when config.toml has changed since
-// stamp. A file that can't be read (mid-edit, a typo) leaves them as they are.
+// followLimits applies the user's [limits], and whether idle sessions may be
+// woken, when config.toml has changed since stamp. A file that can't be read (mid-edit, a typo) leaves them as they are.
 func (s *Server) followLimits(stamp string) string {
 	now := fileStamp(config.Path())
 	if now == stamp {
@@ -138,6 +139,7 @@ func (s *Server) followLimits(stamp string) string {
 	}
 	if cfg, err := config.LoadFile(); err == nil {
 		s.Store.SetLimits(cfg.Limits)
+		s.wakeIdle.Store(cfg.Delivery.WakeIdle)
 	}
 	return now
 }

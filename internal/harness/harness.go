@@ -22,6 +22,8 @@ type Env struct {
 	Home string // user home directory
 	Bin  string // absolute path of the ainterlinked executable
 	GOOS string
+	// WakeIdle wires what wakes idle sessions (delivery.wake_idle).
+	WakeIdle bool
 	// LookPath finds harness CLIs (overridable in tests).
 	LookPath func(string) (string, error)
 }
@@ -174,7 +176,8 @@ func mcpArgs(harness string) []string { return []string{"mcp", "--harness", harn
 type hookSpec struct {
 	Event   string
 	Matcher string
-	Timeout int // seconds; 0 = the harness-wide default
+	Timeout int    // seconds; 0 = the harness-wide default
+	Rewake  string // run in the background as this event and wake the session (Claude Code's asyncRewake)
 }
 
 // setClaudeStyleHooks replaces our entries under root.hooks (root = "" for
@@ -191,6 +194,9 @@ func setClaudeStyleHooks(src []byte, e *Env, harness string, specs []hookSpec, t
 		}
 		if s.Timeout > 0 {
 			h["timeout"] = s.Timeout
+		}
+		if s.Rewake != "" {
+			h["command"], h["asyncRewake"] = e.hookCmd(harness, s.Rewake, powershell), true
 		}
 		group := map[string]any{"hooks": []any{h}}
 		if s.Matcher != "" {

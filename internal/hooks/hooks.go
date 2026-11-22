@@ -25,6 +25,7 @@ import (
 	"github.com/romanpert/ainterlinked/internal/hub"
 	"github.com/romanpert/ainterlinked/internal/render"
 	"github.com/romanpert/ainterlinked/internal/session"
+	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
 // Kind is a normalized hook event.
@@ -70,6 +71,7 @@ type Input struct {
 	Prompt         string
 	Model          string
 	Auto           bool // the prompt was injected by ainterlinked itself
+	Woken          bool // it was a wake-up of an idle session
 }
 
 func str(m map[string]any, keys ...string) string {
@@ -120,6 +122,8 @@ func ParseInput(data []byte) Input {
 	}
 	in.Prompt = str(m, "prompt")
 	in.Auto, _ = m["ainterlinked_auto"].(bool)
+	in.Woken = strings.Contains(in.Prompt, transcript.WakeMark)
+	in.Auto = in.Auto || in.Woken
 	if old, ok := m["interlinked_auto"].(bool); ok && old { // an OpenCode plugin from before the rename
 		in.Auto = true
 	}
@@ -217,7 +221,8 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 		}
 	}()
 	kind := Normalize(event)
-	if kind == "" || !cfg.HarnessEnabled(harness) || borrowed(harness) {
+	harness, run := runsAs(harness)
+	if kind == "" || !run || !cfg.HarnessEnabled(harness) {
 		return
 	}
 	// One deadline for the whole hook, well under every harness's timeout:
@@ -262,13 +267,6 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 	case <-ctx.Done():
 		logf("hook %s %s: gave up after %s (hub open after %dms)", harness, event, Budget, opened.Load())
 	}
-}
-
-// borrowed reports a hook run by a harness it wasn't written for: Grok Build
-// also runs the hooks in Claude Code's and Cursor's files, where it would
-// register as them. Its own file (harness "grok") covers it.
-func borrowed(harness string) bool {
-	return harness != "grok" && os.Getenv("GROK_HOOK_EVENT") != ""
 }
 
 // Budget bounds a hook invocation end to end (harness timeouts are 15 s).
@@ -351,6 +349,8 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 			// The hub keeps who started the turn: what the agent does now is
 			// on the user's order.
 			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, User: true}, nil)
+		} else if in.Woken && harness == "codex" {
+			BumpHolds(me.ID) // the hub queued it; here it counts against the same limit
 		}
 		activity := "on a new request from the user"
 		if cfg.Presence.SharePrompts {

@@ -22,6 +22,10 @@ type Origin struct {
 	Peer int64 // unix ms of a later turn started by a peer (0: none)
 }
 
+// WakeMark starts the text that wakes an idle session for peer mail. It
+// marks a turn as peers': a prompt that carries it is never the user's.
+const WakeMark = "[ainterlinked wake]"
+
 // Budget is how much of a transcript is read, from its end, looking for
 // the latest turn's start. Past it, no user prompt is found.
 const Budget = 64 << 20

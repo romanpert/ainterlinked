@@ -179,6 +179,9 @@ func cmdHook(args []string) int {
 	if len(args) < 2 {
 		return 0
 	}
+	if args[1] == "Wake" {
+		return hooks.Wait(context.Background(), loadConfig(), args[0], os.Stdin, os.Stderr)
+	}
 	hooks.Run(context.Background(), loadConfig(), args[0], args[1], os.Stdin, os.Stdout)
 	return 0
 }
@@ -335,6 +338,7 @@ func cmdInstall(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w — fix it (or move it away) and run install again", err)
 	}
+	e.WakeIdle = cfg.Delivery.WakeIdle
 	fmt.Printf("ainterlinked %s → %s\n\n", Version, filepath.ToSlash(bin))
 	var notes []string
 	failed := 0
