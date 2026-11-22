@@ -243,7 +243,6 @@ func TestDisabledHarnessIsSilent(t *testing.T) {
 	e := setup(t)
 	e.cfg.Harnesses["codex"] = config.HarnessCfg{Enabled: false}
 	var buf bytes.Buffer
-	t.Setenv("INTERLINKED_HUB", "")
 	Run(context.Background(), e.cfg, "codex", "SessionStart", strings.NewReader(`{}`), &buf)
 	if buf.Len() != 0 {
 		t.Fatalf("disabled harness printed %q", buf.String())

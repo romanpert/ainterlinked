@@ -21,8 +21,6 @@ func sandbox(t *testing.T) (home, userHome, project string) {
 	}
 	t.Setenv("INTERLINKED_HOME", home)
 	t.Setenv("INTERLINKED_USER_HOME", userHome)
-	t.Setenv("INTERLINKED_HUB", "")
-	t.Setenv("INTERLINKED_TOKEN", "")
 	t.Setenv("INTERLINKED_BIN", "/opt/interlinked/interlinked")
 	t.Setenv("INTERLINKED_ANCHOR_PID", "4242")
 	t.Setenv("INTERLINKED_NAME", "")

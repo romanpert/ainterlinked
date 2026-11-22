@@ -43,7 +43,7 @@ mkdirSync(OUT, { recursive: true });
 mkdirSync(HOME, { recursive: true });
 mkdirSync(PROJECT, { recursive: true });
 const c = randomBytes(2).toString("hex").toUpperCase();
-const env = { ...process.env, INTERLINKED_HOME: HOME, INTERLINKED_HUB: "", INTERLINKED_TOKEN: "" };
+const env = { ...process.env, INTERLINKED_HOME: HOME };
 
 const t0 = Date.now();
 const deadline = t0 + HARD_LIMIT_MS;

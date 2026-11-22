@@ -14,7 +14,7 @@ import { createInterface } from "node:readline";
 const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/interlinked.exe" : "bin/interlinked"));
 const HOME = mkdtempSync(join(tmpdir(), "il-e2e-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "il-proj-"));
-const env = { ...process.env, INTERLINKED_HOME: HOME, INTERLINKED_HUB: "" };
+const env = { ...process.env, INTERLINKED_HOME: HOME };
 delete env.INTERLINKED_ANCHOR_PID;
 let failures = 0;
 const ok = (cond, what, extra = "") => {

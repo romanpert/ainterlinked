@@ -17,7 +17,7 @@ import { createInterface } from "node:readline";
 const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/interlinked.exe" : "bin/interlinked"));
 const HOME = mkdtempSync(join(tmpdir(), "il-live-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "demo-"));
-const env = { ...process.env, INTERLINKED_HOME: HOME, INTERLINKED_HUB: "" };
+const env = { ...process.env, INTERLINKED_HOME: HOME };
 const cmd = BIN.replaceAll("\\", "/");
 
 const mcpConfig = join(HOME, "mcp.json");
