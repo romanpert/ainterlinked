@@ -202,7 +202,14 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		}
 		var facts map[string]core.Facts
 		_ = c.Call(ctx, "facts", hub.FactsParam{Viewer: me, Names: names}, &facts) // an older hub has none: the list still stands
-		return render.Agents(list, me) + render.FactsBlock(list, facts), nil
+		out := render.Agents(list, me) + render.FactsBlock(list, facts)
+		var m core.Machine
+		if c.Call(ctx, "machine", hub.Empty{}, &m) == nil {
+			if line := render.Machine(m); line != "" {
+				out += "\n" + line
+			}
+		}
+		return out, nil
 	case "set_status":
 		r := core.StatusReq{ID: me}
 		get("state", &r.State)

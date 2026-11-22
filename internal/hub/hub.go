@@ -174,10 +174,12 @@ func Methods(s *core.Store) map[string]handler {
 			n, err := s.Release(ctx, p.Agent, p.Paths)
 			return ReleaseResult{n}, err
 		}),
-		"locks":      op(func(ctx context.Context, p ProjectParam) ([]core.Lock, error) { return s.Locks(ctx, p.ProjectPath) }),
-		"check_file": op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.CheckFile(ctx, p.Agent, p.File) }),
-		"touch_file": op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.TouchFile(ctx, p.Agent, p.File) }),
-		"feed":       op(s.Feed),
+		"locks":          op(func(ctx context.Context, p ProjectParam) ([]core.Lock, error) { return s.Locks(ctx, p.ProjectPath) }),
+		"check_file":     op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.CheckFile(ctx, p.Agent, p.File) }),
+		"touch_file":     op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.TouchFile(ctx, p.Agent, p.File) }),
+		"feed":           op(s.Feed),
+		"machine":        op(func(ctx context.Context, _ Empty) (core.Machine, error) { return s.Machine(ctx) }),
+		"machine_sample": op(s.SampleMachine),
 		"note": op(func(ctx context.Context, p NoteParam) (Empty, error) {
 			return Empty{}, s.Note(ctx, p.Agent, p.Kind, p.Summary)
 		}),

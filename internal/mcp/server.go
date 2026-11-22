@@ -359,6 +359,7 @@ func (s *Server) register() error {
 	s.mu.Unlock()
 	s.bgOnce.Do(func() {
 		go s.heartbeat()
+		go s.machineLoop()
 		if s.channel {
 			go s.pushLoop()
 		}

@@ -9,8 +9,8 @@ import (
 // schemaV2 adds what the hub learned from real multi-agent use: per-agent
 // delivery preferences and topic subscriptions, a wait queue for reserved
 // files, how each receipt is delivered (full or one-line brief), previous
-// names of an agent, reservations linked to a task, and each sender's
-// broadcast budget.
+// names of an agent, reservations linked to a task, each sender's
+// broadcast budget, and this machine's load (v6, one row).
 const schemaV2 = `
 CREATE TABLE IF NOT EXISTS prefs(
   agent_id TEXT PRIMARY KEY,
@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS broadcast_budget(
   agent_id TEXT PRIMARY KEY,
   full_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS machine(
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  cpu REAL NOT NULL DEFAULT -1,
+  cpu_avg REAL NOT NULL DEFAULT -1,
+  approx INTEGER NOT NULL DEFAULT 0,
+  mem_total INTEGER NOT NULL DEFAULT 0,
+  mem_avail INTEGER NOT NULL DEFAULT 0,
+  disk_total INTEGER NOT NULL DEFAULT 0,
+  disk_free INTEGER NOT NULL DEFAULT 0,
+  cores INTEGER NOT NULL DEFAULT 0,
+  sampled_at INTEGER NOT NULL DEFAULT 0,
+  sampler_id TEXT NOT NULL DEFAULT '',
+  lease_until INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO machine(id) VALUES(1);
 `
 
 // addedColumns are applied with ALTER TABLE when missing, so a database made
@@ -95,8 +110,8 @@ func upgraded(db *sql.DB) bool {
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget')`).Scan(&n)
-	return err == nil && n == 5
+	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine')`).Scan(&n)
+	return err == nil && n == 6
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {

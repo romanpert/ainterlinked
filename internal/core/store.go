@@ -20,7 +20,7 @@ import (
 
 // schemaVersion is raised with every addition to migrate.go: a database
 // marked with the current version is not migrated again on open.
-const schemaVersion = 5
+const schemaVersion = 6
 
 func atoi(s string) int {
 	n := 0

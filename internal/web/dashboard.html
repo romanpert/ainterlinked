@@ -161,9 +161,19 @@ function renderBoard(tasks, boards) {
       <div>${esc(t.title)}</div>${t.assignee ? `<div class="who">@${esc(t.assignee)}</div>` : ""}</div>`).join("")}</div>`;
   }).join("");
 }
+const gb = (n) => { const g = n / 2 ** 30; return (g >= 100 ? g.toFixed(0) : g.toFixed(1)) + " GB"; };
+// This machine's load: shown only while a session samples it (an old figure would mislead).
+function loadSpans(m) {
+  if (!m || !m.fresh) return `<span title="No session is sampling the load">load <b>–</b></span>`;
+  const cpu = m.cpu < 0 ? "…" : (m.approx ? "~" : "") + Math.round(m.cpu) + "%";
+  const avg = m.cpu_avg >= 0 && !m.approx ? ` title="1-minute average ${Math.round(m.cpu_avg)}%"` : "";
+  return `<span${avg}>CPU <b>${cpu}</b> of ${m.cores} cores</span>` +
+    `<span>memory <b>${gb(m.mem_avail)}</b> free of ${gb(m.mem_total)}</span>` +
+    `<span>disk <b>${gb(m.disk_free)}</b> free of ${gb(m.disk_total)}</span>`;
+}
 function render(s) {
   const online = s.agents.filter((a) => a.online).length;
-  $("meta").innerHTML = `<span>machine <b>${esc(s.machine)}</b></span><span><b>${online}</b> agents online</span>` +
+  $("meta").innerHTML = `<span>machine <b>${esc(s.machine)}</b></span>${loadSpans(s.load)}<span><b>${online}</b> agents online</span>` +
     `<span><b>${s.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length}</b> open tasks</span><span><b>${s.locks.length}</b> reservations</span><span>v${esc(s.version)}</span>`;
   renderAgents(s.agents);
   renderHarnesses(s.harnesses || []);
