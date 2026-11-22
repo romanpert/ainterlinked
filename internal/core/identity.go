@@ -12,12 +12,8 @@ import (
 // maxAka bounds how many earlier names an agent keeps.
 const maxAka = 8
 
-// An agent can only be continued once it has been silent this long (longer
-// across machines, where its process can't be checked).
-const (
-	handoverQuiet       = 2 * time.Minute
-	handoverQuietRemote = 10 * time.Minute
-)
+// An agent can only be continued once it has been silent this long.
+const handoverQuiet = 2 * time.Minute
 
 // setAka records a's current name among its earlier names before it changes
 // to next (so messages to the old name still reach it).
@@ -67,23 +63,20 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 		return Agent{}, fmt.Errorf("%s can't be continued by an agent", old.Name)
 	}
 	// The project is identified by its checkout, not by the name an agent
-	// declares: same machine means the same path. Across machines (a shared
-	// hub) the checkouts differ, so the project name and harness family of
-	// the operator's own setup are all there is; the hand-over is logged.
+	// declares: the same path on the same machine. A machine name is only
+	// what a client says, so a hand-over across machines would rest on a
+	// claim anyone can make: refused until hubs know machines by credential.
 	switch {
 	case self.ProjectPath == "" || old.ProjectPath == "":
 		return Agent{}, errors.New("both agents need a project checkout to hand over work")
-	case old.Machine == self.Machine && old.ProjectPath != self.ProjectPath:
+	case old.Machine != self.Machine:
+		return Agent{}, fmt.Errorf("%s worked on another machine (%q); hand-overs work within one machine only", old.Name, old.Machine)
+	case old.ProjectPath != self.ProjectPath:
 		return Agent{}, fmt.Errorf("%s worked in %s, you are in %s; continue it from that checkout", old.Name, old.ProjectPath, self.ProjectPath)
-	case old.Machine != self.Machine && !strings.EqualFold(old.Project, self.Project):
-		return Agent{}, fmt.Errorf("%s worked on project %q, you are on %q", old.Name, old.Project, self.Project)
 	}
-	// It must really be gone, not in a long think: quiet for a while, and on
-	// this machine its harness process must have exited.
+	// It must really be gone, not in a long think: quiet for a while, and
+	// its harness process must have exited.
 	quiet := handoverQuiet
-	if old.Machine != self.Machine {
-		quiet = handoverQuietRemote
-	}
 	if since := time.Duration(s.ms()-old.LastSeen) * time.Millisecond; since < quiet {
 		return Agent{}, fmt.Errorf("%s was seen %s ago; it can be continued once it has been gone %s", old.Name, since.Round(time.Second), quiet)
 	}
@@ -146,8 +139,8 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 			return err
 		}
 		notice(tx, now, Agent{ID: old.ID, Name: old.Name}, "your work was continued",
-			fmt.Sprintf("While you were away, %s (%s on %s) continued your work: your mail, threads, tasks and reservations are now theirs. If that wasn't intended, tell the operator.",
-				name, self.Harness, self.Machine))
+			fmt.Sprintf("While you were away, %q (harness %q on machine %q) continued your work: your mail, threads, tasks and reservations are now theirs. If that wasn't intended, tell the operator.",
+				oneLine(name, 64), oneLine(self.Harness, 40), oneLine(self.Machine, 64)))
 		event(tx, now, &self, "lock", fmt.Sprintf("%s took over %s's tasks and reservations", name, old.Name))
 		event(tx, now, &self, "joined", fmt.Sprintf("%s continues %s (%s → %s)", name, old.Name, old.Harness, self.Harness))
 		var err error

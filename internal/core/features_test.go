@@ -228,6 +228,12 @@ func TestContinueAsHandsOverEverything(t *testing.T) {
 	if _, err := s.ContinueAs(ctx, fake.ID, "ls6-cierre"); err == nil {
 		t.Fatal("a session in another checkout must not continue it")
 	}
+	// A machine name is only a claim: declaring another one doesn't get
+	// around the same-checkout rule.
+	spoof := reg(t, s, RegisterReq{Harness: "cursor", Project: "api", ProjectPath: "/elsewhere/api", Machine: "laptop", AnchorPID: 8})
+	if _, err := s.ContinueAs(ctx, spoof.ID, "ls6-cierre"); err == nil {
+		t.Fatal("a claimed other machine must not bypass the checkout check")
+	}
 	human := reg(t, s, RegisterReq{Harness: "human", Project: "api", AnchorPID: 7, Name: "human"})
 	_ = s.Leave(ctx, human.ID)
 	if _, err := s.ContinueAs(ctx, peer.ID, "human"); err == nil {
