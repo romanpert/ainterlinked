@@ -59,8 +59,9 @@ func claudeLike(event string, kind Kind, res Result) map[string]any {
 
 // grok takes Claude's output, but discards what SessionStart and
 // UserPromptSubmit hooks print: mail waits there for an event that shows it.
+// Only those two are dropped: a deny or a block always reaches Grok.
 func grok(event string, kind Kind, res Result) map[string]any {
-	if res.Context != "" && kind != PostTool {
+	if kind == Start || kind == Prompt {
 		return nil
 	}
 	return claudeLike(event, kind, res)
