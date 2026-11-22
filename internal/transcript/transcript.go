@@ -81,15 +81,20 @@ var readers = map[string]reader{
 	"claude-code": {find: claudeFind, classify: claudeLine},
 }
 
-// claudeRoots are Claude Code's configuration directories: CLAUDE_CONFIG_DIR
-// when set (as the hub process found it), and ~/.claude.
+// claudeRoots are Claude Code's configuration directories: ~/.claude first,
+// so a session found there is never looked up anywhere else, then
+// CLAUDE_CONFIG_DIR as the hub process found it when it started. (The
+// hub's environment is that of the client that started it: an agent can
+// only choose it by killing the hub, the same class as editing its
+// database while it's down; running the hub under its own account closes
+// both.)
 func claudeRoots() []string {
 	var out []string
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(d) {
-		out = append(out, d)
-	}
 	if h, err := os.UserHomeDir(); err == nil {
 		out = append(out, filepath.Join(h, ".claude"))
+	}
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(d) {
+		out = append(out, d)
 	}
 	return out
 }
