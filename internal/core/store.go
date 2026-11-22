@@ -319,7 +319,7 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		{`DELETE FROM messages WHERE created_at < ? AND id NOT IN (SELECT message_id FROM receipts)`, cut},
 		{`DELETE FROM agents WHERE online=0 AND last_seen < ? AND id NOT IN (SELECT agent_id FROM receipts WHERE read_at=0)`, cut},
 		// A session's spend is rewritten on every read: an old row is a
-		// session long over (facts look back a week; retention is longer).
+		// session long over, past what facts look back on (the same week).
 		{`DELETE FROM spend WHERE updated_at < ?`, cut},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.sql, q.arg); err != nil {
