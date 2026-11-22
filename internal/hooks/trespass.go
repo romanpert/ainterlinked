@@ -171,12 +171,18 @@ func trespass(ctx context.Context, c hub.Client, me core.Agent, in Input) string
 	if !byUser {
 		origin = "during a turn kept going by peer messages, not by the user"
 	}
+	dir := in.Cwd
+	if filepath.IsAbs(in.ToolDir) {
+		dir = in.ToolDir
+	} else if in.ToolDir != "" && dir != "" {
+		dir = filepath.Join(dir, in.ToolDir)
+	}
 	done := reported(me.ID)
 	var told []string
 	for _, w := range writes {
 		f := w
-		if !filepath.IsAbs(f) && in.Cwd != "" {
-			f = filepath.Join(in.Cwd, f)
+		if !filepath.IsAbs(f) && dir != "" {
+			f = filepath.Join(dir, f)
 		}
 		// Reservations hold canonical paths (session.Detect), as in touchFile:
 		// on macOS the cwd a harness reports goes through /var -> /private/var.

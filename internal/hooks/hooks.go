@@ -67,6 +67,7 @@ type Input struct {
 	raw            map[string]any
 	SessionID      string
 	Cwd            string
+	ToolDir        string // where the model says a command runs (never whose project it is)
 	ToolName       string
 	ToolInput      map[string]any
 	StopHookActive bool
@@ -439,6 +440,9 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		return Result{Context: joinNonEmpty(parts, "\n\n")}, nil
 
 	case Stop:
+		if harness == "antigravity" {
+			turnOver(me.ID, in)
+		}
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "idle", Quiet: true}, nil)
 		// A turn that ended in an error isn't kept going into it again.
 		if why := str(in.raw, "terminationReason"); why != "" && why != "model_stop" {

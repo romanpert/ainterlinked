@@ -2,9 +2,11 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/hub"
@@ -50,6 +52,36 @@ func TestAntigravityIsRefusedAReservedFile(t *testing.T) {
 	}
 	if a := e.agent("1"); a.Harness != "antigravity" || a.SessionID != conv || a.Model != "gemini" {
 		t.Errorf("agent: %+v", a)
+	}
+}
+
+// The model writes a tool's Cwd: it says where a command runs, never whose
+// project the reservations are.
+func TestAntigravityToolCwdPicksNoProject(t *testing.T) {
+	e := setup(t)
+	e.as("2", "claude-code", "SessionStart", nil)
+	var r core.LockResult
+	if err := e.c.Call(context.Background(), "reserve", core.LockReq{Agent: e.agent("2").ID, Paths: []string{"src/"}, Reason: "task #4"}, &r); err != nil || len(r.Granted) != 1 {
+		t.Fatal(err, r)
+	}
+	e.ag("SessionStart", nil)
+	want := e.agent("1").ProjectPath
+	tool := func(name string, args map[string]any) map[string]any {
+		return map[string]any{"toolCall": map[string]any{"name": name, "args": args}}
+	}
+	_, out := e.ag("PreToolUse", tool("write_to_file", map[string]any{"TargetFile": filepath.Join(e.dir, "src", "main.go"), "Cwd": t.TempDir()}))
+	if out["decision"] != "deny" {
+		t.Errorf("another Cwd let the edit through: %v", out)
+	}
+	e.ag("PostToolUse", tool("run_command", map[string]any{"CommandLine": "ls", "Cwd": t.TempDir()}))
+	if got := e.agent("1").ProjectPath; got != want {
+		t.Errorf("a command's Cwd moved the agent to %s", got)
+	}
+	e.ag("PostToolUse", tool("run_command", map[string]any{"CommandLine": "echo x > main.go", "Cwd": filepath.Join(e.dir, "src")}))
+	var u hub.UnreadResult
+	_ = e.c.Call(context.Background(), "unread", hub.AgentParam{Agent: e.agent("2").ID}, &u)
+	if u.Total == 0 {
+		t.Error("a relative write wasn't resolved from the command's Cwd")
 	}
 }
 
@@ -117,5 +149,58 @@ func TestWhatCountsAsAnAntigravityPrompt(t *testing.T) {
 	}
 	if e.invoke("thanks, now the docs"); holds() != 0 {
 		t.Fatal("the user's prompt starts over")
+	}
+	// A subagent from the user's own turn is a subagent in a later one too,
+	// whether or not the turn it came from is over.
+	talk := func(id, input string) {
+		e.ag("PreInvocation", map[string]any{"conversationId": id, "lastUserInput": input})
+	}
+	stop := func(id string, idle bool) {
+		e.ag("Stop", map[string]any{"conversationId": id, "terminationReason": "model_stop", "fullyIdle": idle})
+	}
+	stop("sub", true)
+	talk("early", "look into X")
+	stop("early", true)
+	stop(conv, false) // its background work goes on
+	talk("background", "look into W")
+	stop("background", true)
+	stop(conv, true)
+	BumpHolds(id)
+	talk("held", "look into V") // nothing under way, but peers hold the turn
+	stop("held", true)
+	for _, c := range []string{"early", "background", "held"} {
+		if talk(c, "now into Z"); holds() != 1 {
+			t.Fatalf("the %s subagent passed as the user", c)
+		}
+		stop(c, true)
+	}
+	// The user's next conversation, with nothing running, is the user's.
+	ResetHolds(id)
+	talk("second", "another thing")
+	BumpHolds(id)
+	if talk("second", "and one more"); holds() != 0 {
+		t.Fatal("the user's second conversation doesn't count")
+	}
+}
+
+func TestAntigravityTurnsThatNeverStopped(t *testing.T) {
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
+	now := time.Now()
+	turn := func(ago time.Duration) map[string]conversation {
+		return map[string]conversation{"a": {Open: true, Seen: now.Add(-ago).Unix()}}
+	}
+	if !underWay(turn(openFor-time.Minute), now) || underWay(turn(openFor+time.Minute), now) {
+		t.Fatal("a turn with no Stop is under way for openFor")
+	}
+	seen := map[string]conversation{}
+	for i := range maxConversations + 1 {
+		seen[fmt.Sprint(i)] = conversation{Seen: int64(i)}
+	}
+	if err := saveConversations("x", seen); err != nil {
+		t.Fatal(err)
+	}
+	got := conversations("x")
+	if _, oldest := got["0"]; oldest || len(got) != maxConversations {
+		t.Fatalf("kept %d, the oldest: %v", len(got), oldest)
 	}
 }

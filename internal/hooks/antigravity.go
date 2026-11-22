@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/romanpert/ainterlinked/internal/config"
 )
@@ -40,9 +41,7 @@ func parseAntigravity(m map[string]any, in *Input) {
 			in.ToolInput[ours] = v
 		}
 	}
-	if cwd := str(args, "Cwd"); filepath.IsAbs(cwd) {
-		in.Cwd = cwd
-	}
+	in.ToolDir = str(args, "Cwd")
 }
 
 // antigravityOut is Antigravity's output contract. Peer mail goes in as a
@@ -74,47 +73,108 @@ func antigravityNothing(kind Kind) map[string]any {
 	return map[string]any{}
 }
 
-// conversation is what a conversation's last model call was about.
+// conversation is what is known of one of an agent's conversations.
 type conversation struct {
-	Input string `json:"input"` // hash of the user's latest input
-	Held  bool   `json:"held"`  // first seen while peers held the agent's turn
+	Input string `json:"input"` // hash of the latest input
+	Other bool   `json:"other"` // it isn't one the user started, as far as can be told
+	Open  bool   `json:"open"`  // its turn is under way
+	Seen  int64  `json:"seen"`  // Unix seconds of its last model call
 }
 
-// maxConversations are remembered per agent; the rest start over.
+// maxConversations are remembered per agent, the latest ones.
 const maxConversations = 32
+
+// openFor is how long a turn counts as under way after its last model call
+// when no Stop came (a crash, or perhaps a subagent's end, brings none). A
+// subagent starts right after a model call of whoever starts it.
+const openFor = 10 * time.Minute
+
+func conversationsPath(agent string) string {
+	return filepath.Join(config.Home(), "prompts", filepath.Base(agent)+".json")
+}
+
+func conversations(agent string) map[string]conversation {
+	seen := map[string]conversation{}
+	if b, err := os.ReadFile(conversationsPath(agent)); err == nil {
+		_ = json.Unmarshal(b, &seen)
+	}
+	if seen == nil {
+		seen = map[string]conversation{}
+	}
+	return seen
+}
+
+func saveConversations(agent string, seen map[string]conversation) error {
+	for len(seen) > maxConversations {
+		oldest := ""
+		for id, c := range seen {
+			if oldest == "" || c.Seen < seen[oldest].Seen {
+				oldest = id
+			}
+		}
+		delete(seen, oldest)
+	}
+	b, err := json.Marshal(seen)
+	if err != nil {
+		return err
+	}
+	p := conversationsPath(agent)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o600)
+}
 
 // userPrompted says whether a model call starts a prompt of the user's.
 // Antigravity has no hook for that, only one before every call, so it is the
-// user's when the latest input is new and isn't ainterlinked's. A
-// conversation that appeared while peers held the agent's turn (a subagent
-// it started) never counts: peers could keep it going forever.
+// user's when the latest input is new and isn't ainterlinked's. Nothing in it
+// marks a subagent either: a conversation that appeared while another one's
+// turn was under way, or while peers held the agent's turn, is taken for one
+// and never counts, or peers could keep the agent going forever. That costs a
+// conversation the user opens meanwhile its reset, the safe side.
 func userPrompted(agent string, in Input) bool {
-	if in.Prompt == "" || strings.Contains(in.Prompt, "[ainterlinked]") || in.Auto {
-		return false
+	seen, now := conversations(agent), time.Now()
+	c, known := seen[in.SessionID]
+	if !known {
+		c.Other = Holds(agent) > 0 || underWay(seen, now)
 	}
-	p := filepath.Join(config.Home(), "prompts", filepath.Base(agent)+".json")
-	seen := map[string]conversation{}
-	if b, err := os.ReadFile(p); err == nil {
-		_ = json.Unmarshal(b, &seen)
+	fresh := false
+	if in.Prompt != "" && !in.Auto && !strings.Contains(in.Prompt, "[ainterlinked]") {
+		sum := sha256.Sum256([]byte(in.Prompt))
+		input := hex.EncodeToString(sum[:8])
+		fresh = input != c.Input
+		c.Input = input
 	}
-	if len(seen) > maxConversations {
-		seen = map[string]conversation{}
+	c.Open, c.Seen = true, now.Unix()
+	seen[in.SessionID] = c
+	if saveConversations(agent, seen) != nil {
+		return false // the next call would look like a prompt again
 	}
-	sum := sha256.Sum256([]byte(in.Prompt))
-	now := conversation{Input: hex.EncodeToString(sum[:8])}
-	was, known := seen[in.SessionID]
-	if now.Held = was.Held; !known {
-		now.Held = Holds(agent) > 0
-	}
-	if was == now {
-		return false
-	}
-	seen[in.SessionID] = now
-	if b, err := json.Marshal(seen); err == nil {
-		_ = os.MkdirAll(filepath.Dir(p), 0o700)
-		if os.WriteFile(p, b, 0o600) != nil {
-			return false // the next call would look like a prompt again
+	return fresh && !c.Other
+}
+
+// underWay says whether any of these conversations is in the middle of a turn.
+func underWay(seen map[string]conversation, now time.Time) bool {
+	for _, c := range seen {
+		if c.Open && now.Sub(time.Unix(c.Seen, 0)) < openFor {
+			return true
 		}
 	}
-	return !now.Held
+	return false
+}
+
+// turnOver notes that a conversation's turn ended. With work of its own still
+// running in the background it hasn't: a subagent may yet appear.
+func turnOver(agent string, in Input) {
+	if idle, ok := in.raw["fullyIdle"].(bool); ok && !idle {
+		return
+	}
+	seen := conversations(agent)
+	c, known := seen[in.SessionID]
+	if !known || !c.Open {
+		return
+	}
+	c.Open = false
+	seen[in.SessionID] = c
+	_ = saveConversations(agent, seen)
 }
