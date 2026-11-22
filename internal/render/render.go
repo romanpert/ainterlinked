@@ -320,11 +320,11 @@ func Locks(list []core.Lock) string {
 		if l.Reason != "" {
 			fmt.Fprintf(&b, " (reason %q)", l.Reason)
 		}
-		left := time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute)
-		if l.LapsesAt > 0 {
+		switch {
+		case l.LapsesAt > 0:
 			fmt.Fprintf(&b, " · lapses in %s if unused", time.Until(time.UnixMilli(l.LapsesAt)).Round(time.Minute))
-		} else {
-			fmt.Fprintf(&b, " · expires in %s", left)
+		case l.ExpiresAt > 0: // 0: not a lease (a refusal) — nothing expires
+			fmt.Fprintf(&b, " · expires in %s", time.Until(time.UnixMilli(l.ExpiresAt)).Round(time.Minute))
 		}
 		fmt.Fprintf(&b, " · %s\n", l.ProjectPath)
 		if l.Terms != "" {

@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/romanpert/ainterlinked/internal/core"
@@ -17,7 +20,8 @@ import (
 // and only then does the hub stop reserving them.
 //
 //	ainterlinked shared          what the covenant declares and what is in force
-//	ainterlinked shared accept   put the covenant's declaration in force
+//	ainterlinked shared accept   show the covenant's declaration and, confirmed, put it in force
+//	ainterlinked shared accept NEXT.md docs/log.md   share exactly these (no prompt)
 //	ainterlinked shared off      nothing shared here
 func cmdShared(ctx context.Context, args []string) error {
 	c, cfg, err := openHub()
@@ -49,7 +53,7 @@ func cmdShared(ctx context.Context, args []string) error {
 		fmt.Printf("declared in %s: %s\n", covenant.File, listOrNone(declared))
 		for _, p := range cov.Problems() {
 			if strings.Contains(p, "shared") {
-				fmt.Println("  " + p)
+				fmt.Println("  " + printable(p))
 			}
 		}
 		if !sameFiles(now.Files, declared) {
@@ -64,11 +68,26 @@ func cmdShared(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	files := declared
-	if verb == "off" {
-		files = nil
-	} else if len(files) == 0 {
+	var files []string
+	switch {
+	case verb == "off":
+	case len(args) > 1:
+		files = args[1:] // named by the owner: exactly these
+	case len(declared) == 0:
 		return fmt.Errorf("%s declares no shared files (a section \"## shared: NEXT.md, docs/log.md\")", covenant.File)
+	default:
+		// What gets accepted is what the owner sees now and confirms: the
+		// covenant may have changed since they last looked at it.
+		fmt.Printf("in force now: %s\nto share, as %s declares now: %s\n", listOrNone(now.Files), covenant.File, listOrNone(declared))
+		if !terminal() {
+			return errors.New("not a terminal, so nothing to confirm with: name the files instead, `ainterlinked shared accept NEXT.md docs/log.md`")
+		}
+		fmt.Print("share exactly these files, so nobody holds them? [y/N] ")
+		answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" && a != "s" && a != "si" && a != "sí" {
+			return errors.New("not accepted: nothing changed")
+		}
+		files = declared
 	}
 	var got core.SharedList
 	if err := c.Call(ctx, "shared", core.SharedReq{By: me, ProjectPath: here.ProjectPath, Files: files}, &got); err != nil {
@@ -79,7 +98,7 @@ func cmdShared(ctx context.Context, args []string) error {
 		return nil
 	}
 	fmt.Printf("shared, nobody holds them: %s\nediting them reserves nothing and no reservation blocks them; agents follow the covenant's rules for them\n",
-		strings.Join(got.Files, ", "))
+		listOrNone(got.Files))
 	return nil
 }
 
@@ -87,7 +106,28 @@ func listOrNone(fs []string) string {
 	if len(fs) == 0 {
 		return "none"
 	}
-	return strings.Join(fs, ", ")
+	out := make([]string, len(fs))
+	for i, f := range fs {
+		out[i] = printable(f)
+	}
+	return strings.Join(out, ", ")
+}
+
+// printable shows text from the repo (which agents can write) as itself,
+// or quoted when it holds anything a terminal would act on or hide (escape
+// sequences, carriage returns, bidi controls): what the owner reads before
+// accepting must be what gets accepted.
+func printable(s string) string {
+	if strings.IndexFunc(s, func(r rune) bool { return !strconv.IsPrint(r) }) >= 0 {
+		return strconv.QuoteToASCII(s)
+	}
+	return s
+}
+
+// terminal reports whether stdin is an interactive console.
+func terminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // sameFiles compares two lists of project-relative files, ignoring order

@@ -454,17 +454,30 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		if len(res.Granted) > 0 {
 			b.WriteString("reserved:\n" + render.Locks(res.Granted))
 		}
+		// The bus's own refusals (a shared file) are not someone else's
+		// hold: no queue helps, so they are said apart.
+		var held, refused []core.Lock
+		for _, l := range res.Conflicts {
+			if l.Agent == core.SystemSender {
+				refused = append(refused, l)
+			} else {
+				held = append(held, l)
+			}
+		}
+		section := func(s string) {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(s)
+		}
 		switch {
 		case len(res.Queued) > 0:
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString("held by others, so you're queued (you'll be told when it's yours; the holder was told you wait):\n" + render.Waiters(res.Queued))
-		case len(res.Conflicts) > 0:
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString("NOT reserved — held by others (wait=true queues you; or pick other work):\n" + render.Locks(res.Conflicts))
+			section("held by others, so you're queued (you'll be told when it's yours; the holder was told you wait):\n" + render.Waiters(res.Queued))
+		case len(held) > 0:
+			section("NOT reserved — held by others (wait=true queues you; or pick other work):\n" + render.Locks(held))
+		}
+		if len(refused) > 0 {
+			section("NOT reserved, and no reservation is possible:\n" + render.Locks(refused))
 		}
 		return b.String(), nil
 	case "release_files":

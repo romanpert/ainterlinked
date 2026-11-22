@@ -45,7 +45,7 @@ Use (as the human operator)
   task claim|done|block|cancel|reopen <id> [--result text]
   locks                              active file reservations
   budget [<tokens>|off]              cap what one session may spend (billed tokens, e.g. 2M)
-  shared [accept|off]                files of this repo nobody holds (declared in its covenant)
+  shared [accept [files...]|off]     files of this repo nobody holds (declared in its covenant)
   context [<session>] [--all] [--hours N]   what fills sessions' context windows
   feed [-f] [-n 50]                  activity feed (-f follows)
   serve [--listen 127.0.0.1:port]    web dashboard for this machine

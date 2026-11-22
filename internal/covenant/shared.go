@@ -2,6 +2,7 @@ package covenant
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -52,7 +53,8 @@ func sharedHeading(h string) (string, bool) {
 // which a shared section ignores (see Problems).
 func literalFiles(pats []string) (files, rejected []string) {
 	for _, p := range pats {
-		if strings.ContainsAny(p, "*?[") || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") {
+		if strings.ContainsAny(p, "*?[") || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") ||
+			strings.IndexFunc(p, func(r rune) bool { return !strconv.IsPrint(r) }) >= 0 {
 			rejected = append(rejected, p)
 			continue
 		}
