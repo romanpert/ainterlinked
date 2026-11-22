@@ -307,3 +307,40 @@ func TestInstallReplacesPreRenameWiring(t *testing.T) {
 		t.Errorf("cursor mcp:\n%s", c)
 	}
 }
+
+// Config files saved with a UTF-8 BOM (PowerShell 5.1, Notepad) install and
+// uninstall like any other, and keep their BOM.
+func TestInstallThroughByteOrderMark(t *testing.T) {
+	e := sandbox(t)
+	bom := "\xEF\xBB\xBF"
+	files := map[string]string{
+		".claude.json":          bom + `{"mcpServers": {"interlinked": {"type": "stdio", "command": "C:/Old/interlinked.exe"}}}`,
+		".claude/settings.json": bom + `{"permissions": {"allow": ["mcp__interlinked"]}}`,
+	}
+	for p, c := range files {
+		if err := os.WriteFile(filepath.Join(e.Home, filepath.FromSlash(p)), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx := NewTx(false, io.Discard)
+	ByID("claude-code").Install(e, tx)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("install through a BOM: %v", err)
+	}
+	if w := ByID("claude-code").Wired(e); !w.MCP || !w.Hooks || w.Legacy {
+		t.Fatalf("wiring after install: %+v", w)
+	}
+	for p := range files {
+		if b := read(e.path(filepath.FromSlash(p))); !strings.HasPrefix(string(b), bom) {
+			t.Errorf("%s lost its BOM:\n%q", p, b)
+		}
+	}
+	tx = NewTx(false, io.Discard)
+	ByID("claude-code").Uninstall(e, tx)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("uninstall through a BOM: %v", err)
+	}
+	if w := ByID("claude-code").Wired(e); w.MCP || w.Hooks || w.Legacy {
+		t.Fatalf("wiring after uninstall: %+v", w)
+	}
+}

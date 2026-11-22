@@ -265,8 +265,14 @@ func Unmarshal(src []byte, v any, path ...string) (bool, error) {
 	return true, json.Unmarshal(Strip(raw), v)
 }
 
-// Strip removes comments and trailing commas so encoding/json can read it.
+// bom is the UTF-8 byte order mark some Windows tools write at the start of
+// a file (Notepad, PowerShell 5.1's Set-Content -Encoding utf8).
+var bom = []byte{0xEF, 0xBB, 0xBF}
+
+// Strip removes a leading byte order mark, comments and trailing commas so
+// encoding/json can read it.
 func Strip(src []byte) []byte {
+	src = bytes.TrimPrefix(src, bom)
 	var out bytes.Buffer
 	inStr := false
 	for i := 0; i < len(src); i++ {

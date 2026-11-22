@@ -188,3 +188,27 @@ func TestRejectsGarbage(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// Windows editors and PowerShell 5.1's Set-Content -Encoding utf8 start a
+// file with a UTF-8 byte order mark. It must read as JSON, and an edit must
+// keep it (the file stays as its owner saved it).
+func TestByteOrderMarkIsAccepted(t *testing.T) {
+	src := []byte("\xEF\xBB\xBF{\"mcpServers\": {\"x\": {\"command\": \"x\"}}}")
+	if err := Valid(src); err != nil {
+		t.Fatalf("a BOM must not make the file invalid: %v", err)
+	}
+	if _, ok := Get(src, "mcpServers", "x"); !ok {
+		t.Fatal("Get through a BOM")
+	}
+	out, err := Set(src, []string{"mcpServers", "y"}, map[string]any{"command": "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Valid(out); err != nil || !strings.HasPrefix(string(out), "\xEF\xBB\xBF{") {
+		t.Fatalf("edit must stay valid and keep the BOM: %v\n%q", err, out)
+	}
+	v := mustValid(t, out)
+	if _, ok := v["mcpServers"].(map[string]any)["y"]; !ok {
+		t.Fatalf("y not set: %s", out)
+	}
+}
