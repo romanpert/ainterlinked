@@ -344,7 +344,8 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		}
 		for _, f := range files {
 			var l *core.Lock
-			if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: f}, &l); err != nil || l == nil {
+			// The project path is canonical (session.Detect), so the file must be too.
+			if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: session.Canonical(f)}, &l); err != nil || l == nil {
 				continue
 			}
 			msg := fmt.Sprintf("interlinked: %s is reserved by %s (their stated reason: %q; expires in %s). Queue for it with reserve_files wait=true (it becomes yours, and you're told, when they let go), or work on something else meanwhile.",

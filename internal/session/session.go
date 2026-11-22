@@ -33,6 +33,7 @@ func Detect(cfg config.Config, harness, cwd string) Context {
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
+	cwd = Canonical(cwd)
 	root := GitRoot(cwd)
 	if root == "" {
 		root = cwd
@@ -47,6 +48,31 @@ func Detect(cfg config.Config, harness, cwd string) Context {
 		Machine:     cfg.Machine,
 		AnchorPID:   pid,
 		AnchorName:  name,
+	}
+}
+
+// Canonical resolves symlinks in an absolute path, or in its longest existing
+// parent for a file not created yet, so a checkout has one path in every
+// process. On macOS /var and /tmp link to /private/...: getcwd reports the
+// target while harnesses report the link, which split one project in two and
+// let edits through a link slip past reservations. Windows is left as is
+// (NormPath already folds case there, and junctions change no harness path).
+func Canonical(p string) string {
+	if runtime.GOOS == "windows" || !filepath.IsAbs(p) {
+		return p
+	}
+	p = filepath.Clean(p)
+	rest := ""
+	for d := p; ; {
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+		d = parent
 	}
 }
 
