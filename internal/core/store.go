@@ -127,6 +127,7 @@ type Store struct {
 	alive   func(pids []int) (map[int]bool, error)
 	now     func() time.Time
 	limits  atomic.Pointer[Limits]
+	shared  func(projectPath, rel string) bool // see Options.Shared
 
 	keyPath string     // the hub secret agent keys derive from (keys.go)
 	keyMu   sync.Mutex // guards secret
@@ -147,6 +148,10 @@ type Options struct {
 	Busy time.Duration
 	// Limits are the user's terms (nil = DefaultLimits).
 	Limits *Limits
+	// Shared reports whether the owner declared a project-relative file
+	// shared (the repo's covenant): nobody holds it, so editing it reserves
+	// nothing and no reservation blocks it. nil: no file is shared.
+	Shared func(projectPath, rel string) bool
 }
 
 // Open opens (creating if needed) the hub database at path.
@@ -192,7 +197,7 @@ func Open(path string, opt Options) (*Store, error) {
 		opt.Stale = 45 * time.Second
 	}
 	s := &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now,
-		keyPath: filepath.Join(filepath.Dir(path), "hub.key")}
+		shared: opt.Shared, keyPath: filepath.Join(filepath.Dir(path), "hub.key")}
 	limits := DefaultLimits()
 	if opt.Limits != nil {
 		limits = *opt.Limits

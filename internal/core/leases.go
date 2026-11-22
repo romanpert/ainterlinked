@@ -143,6 +143,7 @@ func (s *Store) TouchFile(ctx context.Context, agent, file string) (*Lock, error
 	case err != nil:
 		return &Lock{Pattern: file, Agent: SystemSender, Reason: "refused: " + err.Error()}, nil
 	}
+	shared := s.isShared(me.ProjectPath, rel)
 	var held *Lock
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		if err := s.settle(tx); err != nil {
@@ -156,6 +157,12 @@ func (s *Store) TouchFile(ctx context.Context, agent, file string) (*Lock, error
 		var used []int64
 		for _, l := range live {
 			if !Match(l.Pattern, rel) {
+				continue
+			}
+			if shared { // nobody holds it; an edit still renews our own wider lease
+				if l.AgentID == me.ID && l.Reason != autoReason {
+					used = append(used, l.ID)
+				}
 				continue
 			}
 			if l.AgentID != me.ID {
@@ -176,8 +183,8 @@ func (s *Store) TouchFile(ctx context.Context, agent, file string) (*Lock, error
 				return err
 			}
 		}
-		if lease == 0 {
-			return nil // the user has editing reserve nothing
+		if lease == 0 || shared {
+			return nil // the user has editing reserve nothing, or nothing here
 		}
 		if mine {
 			// Renew automatic leases on this file; explicit ones keep their term.

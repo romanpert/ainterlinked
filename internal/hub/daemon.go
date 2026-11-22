@@ -13,6 +13,7 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/covenant"
 	"github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/proc"
 )
@@ -215,6 +216,7 @@ func storeOptions(cfg config.Config, busy time.Duration) core.Options {
 		Alive:   proc.AliveSet,
 		Busy:    busy,
 		Limits:  &cfg.Limits,
+		Shared:  covenant.Shares,
 	}
 }
 

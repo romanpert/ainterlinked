@@ -305,6 +305,10 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			if err != nil {
 				return err
 			}
+			if s.isShared(me.ProjectPath, pat) { // not even with force, nor queued for
+				res.Conflicts = append(res.Conflicts, sharedRefusal(me.ProjectPath, pat))
+				continue
+			}
 			var clash, ahead []Lock
 			for _, l := range live {
 				if l.AgentID != me.ID && overlap(l.Pattern, pat) {
@@ -437,6 +441,9 @@ func (s *Store) CheckFile(ctx context.Context, agent, file string) (*Lock, error
 	case err != nil:
 		// A path we can't evaluate must not slip past a reservation: fail closed.
 		return &Lock{Pattern: file, Agent: SystemSender, Reason: "refused: " + err.Error()}, nil
+	}
+	if s.isShared(me.ProjectPath, rel) {
+		return nil, nil // nobody holds it
 	}
 	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err

@@ -15,6 +15,8 @@
 //	- Run the tests before committing.
 //	## db/migrations/**, schema.sql   ← globs, relative to the repo root
 //	- Never edit a merged migration; add a new one.
+//	## shared: NEXT.md, docs/decisions.md   ← nobody holds these (see Shares)
+//	- Edit only your own lines, with Edit; never rewrite the file.
 package covenant
 
 import (
@@ -50,6 +52,9 @@ type Section struct {
 	Patterns []string // project-relative globs; empty for the core section
 	Rules    []string
 	Line     int // 1-based line of the heading
+	// Shared marks the files as kept by many agents at once (heading
+	// "shared: <globs>"): nobody holds them. See Shares.
+	Shared bool
 }
 
 // Key identifies the section for "already shown" bookkeeping.
@@ -105,7 +110,10 @@ func Parse(src string) *Covenant {
 		}
 		switch {
 		case strings.HasPrefix(line, "## "):
-			c.Sections = append(c.Sections, Section{Patterns: patterns(line[3:]), Line: i + 1})
+			h, shared := sharedHeading(line[3:])
+			sec := Section{Patterns: patterns(h), Line: i + 1}
+			sec.Shared = shared && len(sec.Patterns) > 0 // "shared: *" would leave nothing to hold
+			c.Sections = append(c.Sections, sec)
 			cur = &c.Sections[len(c.Sections)-1]
 		case cur == nil || line == "" || strings.HasPrefix(line, "#"):
 			// preamble, blank lines and other headings are for humans
@@ -231,7 +239,7 @@ func (c *Covenant) Problems() []string {
 		out = append(out, "core rules are "+strconv.Itoa(n)+" characters, briefed to every session; over "+strconv.Itoa(MaxCore)+" they are clipped. Move area-specific ones under their paths")
 	}
 	for _, s := range c.Sections {
-		if len(s.Rules) == 0 {
+		if len(s.Rules) == 0 && !s.Shared {
 			out = append(out, "line "+strconv.Itoa(s.Line)+": section without rules")
 		}
 		if n := len(strings.Join(s.Rules, "\n")); len(s.Patterns) > 0 && n > MaxScope {
