@@ -34,8 +34,10 @@ func LockPath() string { return filepath.Join(config.Home(), "hub.lock") }
 const (
 	idleExit   = 30 * time.Minute // nobody connected this long: exit
 	checkEvery = 20 * time.Second
-	// handoversPerTick bounds the transcripts read for handovers per check.
-	handoversPerTick = 2
+	// handoversPerTick bounds the transcripts read for handovers per check (a
+	// tenth of a second each): enough that closing thirty sessions at once
+	// leaves them all handed over within a minute.
+	handoversPerTick = 10
 )
 
 // ErrRunning: another hub process holds this hub.
