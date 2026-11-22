@@ -102,3 +102,22 @@ func TestSplitAddsUp(t *testing.T) {
 		t.Fatal(FormatTokens(950), FormatTokens(12_400), FormatTokens(3_400_000), FormatTokens(1500))
 	}
 }
+
+// A transcript only grows: a read that comes out smaller (a swapped file,
+// a forged smaller total) doesn't lower what was recorded, so it can't
+// bring a session back under the owner's cap.
+func TestASmallerReadDoesntLowerTheRecord(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	a := reg(t, s, RegisterReq{Harness: "codex", Project: "api", AnchorPID: 1, SessionID: "c1"})
+	big := transcript.Ledger{transcript.CauseOwn: {In: 900_000, Out: 100_000}}
+	_ = s.RecordSpend(ctx, a.ID, big)
+	_ = s.RecordSpend(ctx, a.ID, transcript.Ledger{transcript.CauseOwn: {In: 10}})
+	if sp, _ := s.GetSpend(ctx, SpendReq{Agent: a.ID}); sp.Billed() != 1_000_000 {
+		t.Fatalf("lowered to %d", sp.Billed())
+	}
+	_ = s.RecordSpend(ctx, a.ID, transcript.Ledger{transcript.CauseOwn: {In: 900_000, Out: 100_500}})
+	if sp, _ := s.GetSpend(ctx, SpendReq{Agent: a.ID}); sp.Billed() != 1_000_500 {
+		t.Fatalf("a larger read wasn't recorded: %d", sp.Billed())
+	}
+}

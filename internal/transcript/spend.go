@@ -57,18 +57,20 @@ func NewSpender() *Spender { return &Spender{sessions: map[string]*sessionLog{}}
 func (sp *Spender) Read(harness, session string) (Ledger, bool) {
 	switch harness {
 	case "claude-code":
-		main := claudeFind("", session)
-		if main == "" {
-			return nil, false
-		}
 		sp.mu.Lock()
 		defer sp.mu.Unlock()
-		s := sp.sessions[main]
-		if s == nil {
-			s = &sessionLog{subs: map[string]*cursor{}, by: Ledger{}}
-			sp.sessions[main] = s
+		// The file is pinned once found: another file of the same name
+		// appearing later (newer, emptier) doesn't replace it.
+		s := sp.sessions["claude-code|"+session]
+		if s == nil || !regular(s.path) {
+			main := claudeFind("", session)
+			if main == "" {
+				return nil, false
+			}
+			s = &sessionLog{path: main, subs: map[string]*cursor{}, by: Ledger{}}
+			sp.sessions["claude-code|"+session] = s
 		}
-		s.claude(main)
+		s.claude(s.path)
 		return s.ledger(), true
 	case "codex":
 		path := codexFind(session)
@@ -82,6 +84,7 @@ func (sp *Spender) Read(harness, session string) (Ledger, bool) {
 }
 
 type sessionLog struct {
+	path     string // the session's transcript, as first found
 	main     cursor
 	subs     map[string]*cursor // subagents' transcripts, by file
 	timeline []change           // the main transcript's turn starts, in order
@@ -166,8 +169,37 @@ func (s *sessionLog) count(c *cursor, line []byte, cause string) {
 	s.by[cause] = s.by[cause].Add(delta)
 }
 
-// heldBy finds the ainterlinked messages a Stop hook held the turn open for.
-var heldBy = regexp.MustCompile(`(?:<<peer-message |\n)#(\d+) from `)
+// header is a delivered message's opening line. Its last "| fence X>>" is
+// the hub's: the line ends there, and a subject can't break the line.
+var header = regexp.MustCompile(`<<peer-message #(\d+) from [^\n]*\| fence ([0-9a-f]+)>>`)
+
+// heldFor returns the ids of the ainterlinked messages a Stop hook held the
+// turn open for: each fenced message's header, skipping its body up to its
+// closing fence, so text inside a body (the sender's) can't name others.
+// Without a closing fence the rest is not read.
+func heldFor(text string) []string {
+	var ids []string
+	for {
+		m := header.FindStringSubmatchIndex(text)
+		if m == nil {
+			return ids
+		}
+		id, fence := text[m[2]:m[3]], text[m[4]:m[5]]
+		rest := text[m[1]:]
+		end := strings.Index(rest, "<<end #"+id+" | fence "+fence)
+		if end < 0 {
+			return ids
+		}
+		ids = append(ids, "#"+id)
+		text = rest[end:]
+	}
+}
+
+// regular reports whether path is (still) a regular file.
+func regular(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
 
 // claudeTurn reports an entry that starts a turn, and its cause: a prompt
 // (the user's, typed or queued while the agent worked), another session's
@@ -206,10 +238,7 @@ func claudeTurn(line []byte) (cause string, at int64, ok bool) {
 		var text string
 		if json.Unmarshal(e.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:") &&
 			(strings.Contains(text, "[ainterlinked]") || strings.Contains(text, "[interlinked]")) {
-			var ids []string
-			for _, m := range heldBy.FindAllStringSubmatch(text, -1) {
-				ids = append(ids, "#"+m[1])
-			}
+			ids := heldFor(text)
 			sort.Strings(ids)
 			return strings.Join(ids, ","), t.UnixMilli(), len(ids) > 0
 		}
@@ -319,7 +348,8 @@ func codexFind(session string) string {
 }
 
 // codexTotal is the last running total Codex wrote (token_count events
-// carry the session's totals so far).
+// carry the session's totals so far). A later, smaller total doesn't lower
+// what the hub recorded (core keeps the larger).
 func codexTotal(path string) (Tokens, bool) {
 	f, err := os.Open(path)
 	if err != nil {

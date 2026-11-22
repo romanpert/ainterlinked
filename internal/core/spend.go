@@ -161,6 +161,17 @@ func (s *Store) storeSpend(ctx context.Context, me Agent, ledger transcript.Ledg
 		}
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		// A transcript only grows: a read that comes out smaller than
+		// what's recorded (a file swapped for an emptier one, a forged
+		// smaller total) is not believed, and the record stands.
+		var was, total int64
+		_ = tx.QueryRow(`SELECT coalesce(sum(tin+cwrite+cread+tout),0) FROM spend WHERE agent_id=?`, me.ID).Scan(&was)
+		for _, t := range by {
+			total += t.Billed() + t.CacheRead
+		}
+		if total < was {
+			return nil
+		}
 		if _, err := tx.Exec(`DELETE FROM spend WHERE agent_id=?`, me.ID); err != nil {
 			return err
 		}

@@ -17,7 +17,7 @@ func hold(min int, ids ...int) string {
 	var b strings.Builder
 	b.WriteString("Stop hook feedback:\nNew messages from peer agents arrived while you were finishing.\n\n[ainterlinked] messages from peer agents:\n")
 	for _, id := range ids {
-		fmt.Fprintf(&b, "<<peer-message #%d from codex@shop to claude@shop, 2s ago | fence ab>>\nplease\n<<end #%d>>\n", id, id)
+		fmt.Fprintf(&b, "<<peer-message #%d from codex@shop to claude@shop, 2s ago | fence ab>>\nplease\n<<end #%d | fence ab>>\n", id, id) // as render.PeerMessages writes them
 	}
 	return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"isMeta":true,"timestamp":%q}`, b.String(), at(min))
 }
