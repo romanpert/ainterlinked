@@ -274,6 +274,14 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 	if ttl <= 0 || ttl > 24*time.Hour {
 		ttl = 30 * time.Minute
 	}
+	// Which asked-for files are shared is settled before the transaction:
+	// it may read the project's committed covenant.
+	shared := map[string]bool{}
+	for _, raw := range r.Paths {
+		if pat, err := NormPattern(me.ProjectPath, raw); err == nil && s.isShared(me.ProjectPath, pat) {
+			shared[pat] = true
+		}
+	}
 	var res LockResult
 	claimed := false
 	if r.Task > 0 {
@@ -305,7 +313,7 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			if err != nil {
 				return err
 			}
-			if s.isShared(me.ProjectPath, pat) { // not even with force, nor queued for
+			if shared[pat] { // not even with force, nor queued for
 				res.Conflicts = append(res.Conflicts, sharedRefusal(me.ProjectPath, pat))
 				continue
 			}

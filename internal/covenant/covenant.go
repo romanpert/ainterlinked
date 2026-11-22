@@ -15,7 +15,7 @@
 //	- Run the tests before committing.
 //	## db/migrations/**, schema.sql   ← globs, relative to the repo root
 //	- Never edit a merged migration; add a new one.
-//	## shared: NEXT.md, docs/decisions.md   ← nobody holds these (see Shares)
+//	## shared: NEXT.md, docs/decisions.md   ← files nobody holds, as committed (see Shares)
 //	- Edit only your own lines, with Edit; never rewrite the file.
 package covenant
 
@@ -53,8 +53,13 @@ type Section struct {
 	Rules    []string
 	Line     int // 1-based line of the heading
 	// Shared marks the files as kept by many agents at once (heading
-	// "shared: <globs>"): nobody holds them. See Shares.
+	// "shared: <files>"): nobody holds them. See Shares.
 	Shared bool
+	// Files are the plain files of a shared heading; Rejected the rest
+	// (globs, folders), shared nothing and reported by Problems. The
+	// section's rules still apply to all its Patterns.
+	Files    []string
+	Rejected []string
 }
 
 // Key identifies the section for "already shown" bookkeeping.
@@ -112,7 +117,10 @@ func Parse(src string) *Covenant {
 		case strings.HasPrefix(line, "## "):
 			h, shared := sharedHeading(line[3:])
 			sec := Section{Patterns: patterns(h), Line: i + 1}
-			sec.Shared = shared && len(sec.Patterns) > 0 // "shared: *" would leave nothing to hold
+			if shared && len(sec.Patterns) > 0 { // "shared: *" is the core section, nothing shared
+				sec.Files, sec.Rejected = literalFiles(sec.Patterns)
+				sec.Shared = len(sec.Files) > 0
+			}
 			c.Sections = append(c.Sections, sec)
 			cur = &c.Sections[len(c.Sections)-1]
 		case cur == nil || line == "" || strings.HasPrefix(line, "#"):
@@ -241,6 +249,9 @@ func (c *Covenant) Problems() []string {
 	for _, s := range c.Sections {
 		if len(s.Rules) == 0 && !s.Shared {
 			out = append(out, "line "+strconv.Itoa(s.Line)+": section without rules")
+		}
+		if len(s.Rejected) > 0 {
+			out = append(out, "line "+strconv.Itoa(s.Line)+": shared names files one by one; ignored: "+strings.Join(s.Rejected, ", "))
 		}
 		if n := len(strings.Join(s.Rules, "\n")); len(s.Patterns) > 0 && n > MaxScope {
 			out = append(out, "line "+strconv.Itoa(s.Line)+": "+strconv.Itoa(n)+" characters of rules for "+s.Key()+"; over "+strconv.Itoa(MaxScope)+" they are clipped")
