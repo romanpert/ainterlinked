@@ -148,9 +148,9 @@ type Options struct {
 	Busy time.Duration
 	// Limits are the user's terms (nil = DefaultLimits).
 	Limits *Limits
-	// Shared reports whether the owner declared a project-relative file
-	// shared (the repo's covenant): nobody holds it, so editing it reserves
-	// nothing and no reservation blocks it. nil: no file is shared.
+	// Shared overrides, for tests, whether a project-relative file is shared:
+	// nobody holds it, so editing it reserves nothing and no reservation
+	// blocks it. nil: the owner's list decides (shared.go).
 	Shared func(projectPath, rel string) bool
 }
 

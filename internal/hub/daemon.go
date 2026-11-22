@@ -15,7 +15,6 @@ import (
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/proc"
-	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
 // The hub process: one per machine (per AINTERLINKED_HOME), started by the
@@ -115,7 +114,7 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 		}
 		// Sessions that left hand their work over from their transcripts,
 		// a few per tick: reading a transcript is the hub's work, not theirs.
-		_, _ = s.Store.WriteHandovers(ctx, handoversPerTick, transcript.ReadHandover)
+		_, _ = s.Store.WriteHandovers(ctx, handoversPerTick, handoverIn)
 		if time.Since(pruned) > time.Hour {
 			_ = s.Store.Prune(ctx, core.Retention)
 			pruned = time.Now()

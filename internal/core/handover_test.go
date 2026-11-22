@@ -155,6 +155,24 @@ func TestAHandoverHidesSecretsAndKeepsItsGistOnOneLine(t *testing.T) {
 	}
 }
 
+// A session's own note is redacted before its gist is cut: a token the cut
+// would leave too short to recognise doesn't reach the one-line list.
+func TestANotesSecretIsHiddenBeforeItsGistIsCut(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	me := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 1, SessionID: "s1"})
+	note := strings.Repeat("w ", 76) + "ghp_" + strings.Repeat("Ab3", 10)
+	if _, err := s.LeaveHandover(ctx, HandoverNoteReq{Agent: me.ID, Note: note}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Leave(ctx, me.ID)
+	next := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 2})
+	list, _ := s.Handovers(ctx, HandoverReq{Agent: next.ID})
+	if len(list) != 1 || strings.Contains(list[0].Gist, "ghp_") {
+		t.Fatalf("gist %+v", list)
+	}
+}
+
 // The user decides: handover_days = 0 and the hub writes none (a session's
 // own note still goes through); handover_offers = 0 and none is listed at a
 // session's start (the handover tool still lists them).

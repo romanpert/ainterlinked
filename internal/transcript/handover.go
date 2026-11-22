@@ -2,10 +2,11 @@ package transcript
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/romanpert/ainterlinked/internal/redact"
 )
 
 // A handover is what a session that left knew, for whoever carries its work
@@ -19,6 +20,7 @@ import (
 type Handover struct {
 	Body string
 	Gist string // one line: where the work stands
+	Cwd  string // the working directory the transcript first recorded
 }
 
 // Caps on what a handover keeps from each part.
@@ -31,14 +33,13 @@ const (
 )
 
 // ReadHandover builds the handover of a harness session from its
-// transcript. The transcript must be of a session that ran in project (the
-// checkout the agent registered from): the first working directory Claude
-// Code recorded in it is that folder or inside it, so a session id claimed
-// at registration can't bring another checkout's transcript in. ok is false
-// when the transcript can't be found, ran elsewhere, or the session never
-// reported anything.
-func ReadHandover(harness, session, project string) (Handover, bool) {
-	if harness != "claude-code" || project == "" {
+// transcript, with the working directory the transcript recorded: the hub
+// hands it over only within that checkout. Credential-looking text is hidden
+// in every part before any of it is cut. ok is false when the transcript
+// can't be found, never says where it ran, or the session never reported
+// anything.
+func ReadHandover(harness, session string) (Handover, bool) {
+	if harness != "claude-code" {
 		return Handover{}, false
 	}
 	path := claudeFind("", session)
@@ -89,11 +90,14 @@ func ReadHandover(harness, session, project string) (Handover, bool) {
 			}
 		}
 	})
-	if !within(cwd, project) || (report == "" && summary == "") {
+	if cwd == "" || (report == "" && summary == "") {
 		return Handover{}, false
 	}
+	summary, report, first = redact.Secrets(cleanSummary(summary)), redact.Secrets(report), redact.Secrets(first)
+	for i := range asks {
+		asks[i] = redact.Secrets(asks[i])
+	}
 	var b strings.Builder
-	summary = cleanSummary(summary)
 	if summary != "" {
 		b.WriteString("## Where the work stood (Claude Code's last compaction summary)\n\n")
 		b.WriteString(cut(summary, maxSummary))
@@ -115,20 +119,7 @@ func ReadHandover(harness, session, project string) (Handover, bool) {
 		b.WriteString(cut(report, maxReport))
 		b.WriteString("\n")
 	}
-	return Handover{Body: strings.TrimSpace(b.String()), Gist: gistOf(summary, report, first)}, true
-}
-
-// within reports whether dir is project or a folder inside it.
-func within(dir, project string) bool {
-	if dir == "" {
-		return false
-	}
-	d, p := filepath.Clean(filepath.FromSlash(dir)), filepath.Clean(filepath.FromSlash(project))
-	if samePath(d, p) {
-		return true
-	}
-	sep := string(filepath.Separator)
-	return len(d) > len(p) && samePath(d[:len(p)+1], strings.TrimSuffix(p, sep)+sep)
+	return Handover{Body: strings.TrimSpace(b.String()), Gist: gistOf(summary, report, first), Cwd: cwd}, true
 }
 
 // textOf returns a message content's text: a plain string, or the text

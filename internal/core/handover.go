@@ -73,7 +73,7 @@ func (s *Store) LeaveHandover(ctx context.Context, r HandoverNoteReq) (Handover,
 	if err != nil {
 		return Handover{}, err
 	}
-	note := strings.TrimSpace(r.Note)
+	note := redact.Secrets(strings.TrimSpace(r.Note))
 	if note == "" {
 		return Handover{}, errors.New("an empty note hands nothing over")
 	}

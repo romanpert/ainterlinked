@@ -40,7 +40,7 @@ func TestAHandoverIsTheLastSummaryTheRequestsSinceAndTheLastReport(t *testing.T)
 		said(5, "Tests written; two fail on the tax rounding."),
 		`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"a subagent's words"}]},"timestamp":"`+at(6)+`"}`,
 	)
-	h, ok := ReadHandover("claude-code", sid, proj)
+	h, ok := ReadHandover("claude-code", sid)
 	if !ok {
 		t.Fatal("no handover")
 	}
@@ -59,38 +59,47 @@ func TestAHandoverIsTheLastSummaryTheRequestsSinceAndTheLastReport(t *testing.T)
 	}
 }
 
-// Without a compaction: the first request and the last report. Only a
-// transcript that ran in the agent's checkout (or a folder inside it) is
-// read: a session id claimed from elsewhere brings nothing in.
+// Without a compaction: the first request and the last report, with the
+// folder the session first recorded (the hub binds the handover to that
+// checkout).
 func TestAShortSessionHandsOverItsRequestAndLastReport(t *testing.T) {
-	write(t, opened(proj+"/web"), human(0, "fix the login redirect"), said(1, "Fixed in auth.go:42; deployed nowhere yet."))
-	h, ok := ReadHandover("claude-code", sid, proj)
+	write(t, opened(proj+"/web"), opened("/elsewhere"), human(0, "fix the login redirect"), said(1, "Fixed in auth.go:42; deployed nowhere yet."))
+	h, ok := ReadHandover("claude-code", sid)
 	if !ok || !strings.Contains(h.Body, "## The first request\n\nfix the login redirect") || h.Gist != "Fixed in auth.go:42; deployed nowhere yet." {
 		t.Fatalf("%v %+v", ok, h)
 	}
-	for _, other := range []string{"/work/bank", "/work/shopfront", "/work/shop/api", ""} {
-		if _, ok := ReadHandover("claude-code", sid, other); ok {
-			t.Fatalf("read a transcript of %s/web for %q", proj, other)
-		}
+	if h.Cwd != proj+"/web" {
+		t.Fatalf("cwd %q", h.Cwd)
 	}
-	if _, ok := ReadHandover("claude-code", "00000000-none-4000-8000-000000000000", proj); ok {
+	if _, ok := ReadHandover("claude-code", "00000000-none-4000-8000-000000000000"); ok {
 		t.Fatal("a missing transcript handed something over")
 	}
-	if _, ok := ReadHandover("codex", sid, proj); ok {
+	if _, ok := ReadHandover("codex", sid); ok {
 		t.Fatal("codex has no transcript reader for handovers yet")
+	}
+}
+
+// Secrets are hidden before anything is cut: a token the cut would leave
+// too short to recognise doesn't slip through.
+func TestAHandoverHidesSecretsBeforeCuttingThem(t *testing.T) {
+	report := strings.Repeat("a ", (maxReport-10)/2) + "ghp_" + strings.Repeat("Ab3", 10)
+	write(t, opened(proj), human(0, "use token ghp_"+strings.Repeat("Zz9", 10)), said(1, report))
+	h, ok := ReadHandover("claude-code", sid)
+	if !ok || strings.Contains(h.Body, "ghp_") || strings.Contains(h.Gist, "ghp_") {
+		t.Fatalf("%v %+v", ok, h)
 	}
 }
 
 func TestATranscriptWithoutAWorkingDirectoryHandsOverNothing(t *testing.T) {
 	write(t, human(0, "fix it"), said(1, "fixed"))
-	if _, ok := ReadHandover("claude-code", sid, proj); ok {
+	if _, ok := ReadHandover("claude-code", sid); ok {
 		t.Fatal("read a transcript that never said where it ran")
 	}
 }
 
 func TestANearlyEmptySessionHandsOverNothing(t *testing.T) {
 	p := write(t, opened(proj), human(0, "hi"))
-	if _, ok := ReadHandover("claude-code", sid, proj); ok {
+	if _, ok := ReadHandover("claude-code", sid); ok {
 		t.Fatal("handed over a session that never reported")
 	}
 	_ = os.Remove(p)
