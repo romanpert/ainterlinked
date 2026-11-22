@@ -1,6 +1,8 @@
 # ainterlinked
 
-**A real-time bus for AI coding agents across harnesses.** Claude Code, Codex, GitHub Copilot, Cursor, Gemini CLI, OpenCode, Qwen Code, Windsurf, Zed, Kiro, Cline and Crush sessions running at the same time can see each other, message each other, split work on shared task boards and stay out of each other's files, on the machine they run on.
+**Many AI coding agents in one repository, without stepping on each other.** An agent that edits a file holds it, and another agent's edit to it is refused before it happens, whatever tool each one runs in. Work is claimed once from a shared board, the next in line gets a file when it's free, and agents can message each other about the rest.
+
+It works between sessions of Claude Code, Codex, GitHub Copilot, Cursor, Gemini CLI, OpenCode, Qwen Code, Antigravity, Muse Code, Grok Build, Windsurf, Zed, Kiro, Cline and Crush running at the same time on one machine. What each one supports differs, and is listed [below](#delivery-tiers).
 
 One static binary (Go, no runtime) and one command to wire it into every harness you have installed. It doesn't depend on a model, a vendor or a workflow.
 
@@ -111,11 +113,27 @@ MCP is pull-based: a model only sees what a tool returns or what a hook injects.
 
 | Tier | Meaning | Harnesses |
 |---|---|---|
-| **push** | Reaches an idle session | OpenCode (bundled plugin wakes idle sessions); Claude Code when started with `ainterlinked launch claude` (`claude/channel`, research preview) |
-| **turn** | Injected at the next prompt, tool call or stop; held open on stop | Claude Code, Codex, Copilot CLI, VS Code agent hooks (preview), Cursor, Gemini CLI, Qwen Code |
+| **push** | Reaches an idle session | OpenCode (bundled plugin wakes idle sessions); Claude Code and Codex [if you turn it on](#waking-idle-sessions); Claude Code when started with `ainterlinked launch claude` (`claude/channel`, research preview) |
+| **turn** | Injected at the next prompt, tool call or stop; held open on stop | Claude Code, Codex, Copilot CLI, VS Code agent hooks (preview), Cursor, Gemini CLI, Qwen Code, Antigravity, Muse Code, Grok Build |
 | **pull** | The agent must call `read_inbox` / `wait_for_messages` | Windsurf, Zed, Kiro, Cline, Crush, any other MCP client |
 
 Per-harness details, file locations and caveats are in [docs/harnesses.md](docs/harnesses.md).
+
+### Waking idle sessions
+
+Off unless you turn it on, because a woken session spends a turn of yours. In `config.toml`:
+
+```toml
+[delivery]
+wake_idle = true
+```
+
+Then run `ainterlinked install claude-code` and restart the open sessions (Codex needs neither). Mail addressed by name to an idle Claude Code or Codex session starts a turn there:
+
+- **Claude Code**: a background hook waits while the session is idle and wakes it ([`asyncRewake`](https://code.claude.com/docs/en/hooks)). It is a small process per idle session, and it ends when the session works again or closes, or after a day. It runs in the terminal, VS Code and the desktop app, never in `claude -p` or an SDK script, where it would hold the session open. A Claude Code too old to know `asyncRewake` would run it in the foreground, so update first.
+- **Codex**: the hub runs `codex queue` (0.157 or later) with a notice that mail is waiting. The mail itself arrives through Codex's hook and never on a command line.
+
+Group mail never wakes anyone, nor does mail for an agent that set `inject=manual`. A session is woken at most `max_holds` times between two of your prompts, 30 times an hour, and never past your spend cap. What an agent does in such a turn doesn't count as your order. This has been tested with the bus and simulated harnesses, not yet against a live Claude Code or Codex.
 
 ## How it works
 
@@ -152,6 +170,7 @@ on_prompt = true          # inject unread mail when the user prompts
 on_tool = true            # inject unread mail after tool calls
 hold_stop = true          # keep an agent working while new mail arrives (capped)
 claude_channel = true     # allow push into idle Claude Code sessions via `ainterlinked launch claude`
+wake_idle = false         # start a turn in an idle Claude Code or Codex session for mail addressed to it by name
 max_messages = 5          # per injection; each agent can change its own with set_delivery
 max_chars = 4000
 inline_chars = 600        # longer pushed messages arrive as a gist with a pointer (0: always whole)
@@ -197,7 +216,7 @@ Environment variables: `AINTERLINKED_HOME` (data dir), `AINTERLINKED_NAME` and `
 - **Handovers are bound, not sealed.** The hub hands a transcript over only within the checkout the transcript ran in, resolved the same way registration resolves it, and hides credentials before cutting anything. That checkout and the session id are what the agent's harness reported when it registered, and nothing verifies them. That costs nothing extra: every agent you run under your OS account can already read every harness transcript on disk (`~/.claude/projects` and the like) without asking the bus. Keeping agents out of each other's transcripts takes separate OS accounts, which ainterlinked doesn't set up.
 - **The feed carries no message text.** It shows who wrote to whom and the subject.
 - **Peer messages are information, not instructions.** They land in other models' context, so every message shown to a model carries a warning header. Its body sits inside a fence marked with a random per-call nonce, so a body can't fake the end of its fence. The names `human`, `user` and `system` are reserved for the operator. Treat all of this as mitigation: prompt injection between agents is not a solved problem.
-- **Automatic continuations are capped.** Stop-holds, OpenCode wake-ups and Claude channel pushes share a budget between real user prompts (`max_holds`, 6 unless you change it), and channel pushes are also rate-limited. Two agents cannot keep waking each other and spending tokens.
+- **Automatic continuations are capped.** Stop-holds, wake-ups and Claude channel pushes share a budget between real user prompts (`max_holds`, 6 unless you change it), and Codex wake-ups and channel pushes are also rate-limited. Two agents cannot keep waking each other and spending tokens.
 - **Every config edit is reversible.** Backups sit next to each edited file. Codex additionally makes you trust new hooks through `/hooks` before it runs them.
 - **The Claude Code permission.** `ainterlinked install` adds `mcp__ainterlinked` to Claude Code's `permissions.allow` so agents can use the bus without a prompt per call. `uninstall` removes it.
 
@@ -211,13 +230,14 @@ Version 0.1, beta. Works today:
 Known limits:
 
 - An idle session in a turn-tier harness gets its mail at the next prompt or tool call, not instantly. Only push-tier harnesses wake up.
+- Agents that live in someone's cloud (Grok Bot and similar) can't join: the hub is this machine's, and they don't take MCP servers on localhost.
 - Codex desktop and similar apps that host several conversations in one process show up as one agent.
-- Hook formats for VS Code agent hooks, Copilot, Cursor and Gemini follow their current docs but are not yet verified live in CI.
+- Hook formats for VS Code agent hooks, Copilot, Cursor, Gemini, Antigravity, Muse Code and Grok Build follow their current docs or source but are not yet verified live.
 - Reservations are enforced only where the harness has a pre-tool hook. Elsewhere they are advisory.
 - A message counts as read as soon as ainterlinked hands it to the harness. If the harness then fails to show it, for example because a hook is killed, it is not offered again.
 - Mobile layout of the dashboard is not verified on a real phone.
 
-See [docs/landscape.md](docs/landscape.md) for how this compares with mcp_agent_mail, Claude Code agent teams and channels, A2A, ACP and others.
+See [docs/landscape.md](docs/landscape.md) for how this compares with Claude Code's own messaging, Reason Network, hcom, agmsg, mcp_agent_mail, worktree managers and others.
 
 ## Development
 

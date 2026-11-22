@@ -27,7 +27,7 @@ import (
 // Version is stamped at build time (-ldflags "-X .../cli.Version=x.y.z").
 var Version = "0.1.0-dev"
 
-const usage = `ainterlinked — a real-time bus for AI coding agents across harnesses
+const usage = `ainterlinked — many AI coding agents in one repository, without stepping on each other
 
 Setup
   install [harness...] [--dry-run]   wire every detected harness (or the ones named)
