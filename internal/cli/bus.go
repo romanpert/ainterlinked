@@ -354,8 +354,8 @@ func cmdServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer client.Close()
-	local := client.(*hub.Local)
-	srv := &web.Server{Hub: local, Machine: cfg.Machine, Version: Version, Scan: func() []web.HarnessStatus {
+
+	srv := &web.Server{Hub: client, Machine: cfg.Machine, Version: Version, Scan: func() []web.HarnessStatus {
 		e, cur := env(), loadConfig()
 		var out []web.HarnessStatus
 		for _, h := range harness.All() {
@@ -369,18 +369,20 @@ func cmdServe(ctx context.Context, args []string) error {
 		return fmt.Errorf("serve listens on this machine only (e.g. 127.0.0.1:7717), not %s", *listen)
 	}
 	fmt.Printf("interlinked dashboard: http://%s\n", *listen)
-	go func() {
-		t := time.NewTicker(time.Hour)
-		defer t.Stop()
-		for {
-			_ = local.Store.Prune(ctx, core.Retention)
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
+	if local, ok := client.(*hub.Local); ok { // with a hub process, it prunes
+		go func() {
+			t := time.NewTicker(time.Hour)
+			defer t.Stop()
+			for {
+				_ = local.Store.Prune(ctx, core.Retention)
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
 			}
-		}
-	}()
+		}()
+	}
 	return srv.Listen(ctx, *listen)
 }
 
@@ -412,6 +414,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		return fmt.Errorf("%d problem(s)", bad+0)
 	}
 	defer c.Close()
+	check("hub mode", nil, hubMode(ctx, c))
 	me, err := human(ctx, c, cfg)
 	var n []core.Agent
 	if err == nil {

@@ -59,7 +59,14 @@ function hook(harness, event, payload) {
   const r = spawnSync(shell, ["-c", cmd], { env, cwd: PROJECT, input: JSON.stringify({ cwd: PROJECT, ...payload }), encoding: "utf8" });
   return { out: r.stdout.trim() ? JSON.parse(r.stdout) : null, ms: Date.now() - t0, code: r.status };
 }
-const cli = (...args) => spawnSync(BIN, args, { env, cwd: PROJECT, encoding: "utf8" });
+// The human operator types in a terminal of their own, not inside an agent's
+// harness: run the CLI from a separate process, as a terminal would. The
+// hub process tells the two apart from the kernel's process tree.
+const TERMINAL = "const c=require('child_process').spawn(process.argv[1],process.argv.slice(2),{stdio:'inherit'});c.on('exit',(x)=>process.exit(x??1))";
+const cli = (...args) => spawnSync(process.execPath, ["-e", TERMINAL, BIN, ...args], { env, cwd: PROJECT, encoding: "utf8" });
+// The same CLI run straight from the "harness" (an agent's shell).
+const agentCli = (...args) => spawnSync(BIN, args, { env, cwd: PROJECT, encoding: "utf8" });
+const killTree = (p) => (process.platform === "win32" ? spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)]) : p.kill());
 
 try {
   const a = new MCP("claude-code");
@@ -96,6 +103,14 @@ try {
   ok(injected.out?.hookSpecificOutput?.additionalContext?.includes("please rebase on main"), "human message injected after a tool call", `${injected.ms} ms`);
   await a.tool("send_message", { to: "human", body: "done rebasing" });
   ok(cli("inbox").stdout.includes("done rebasing"), "agent reaches the human inbox");
+  // Identity comes from the kernel: the CLI inside an agent's harness is that
+  // agent, and can't read or act as the human.
+  if (env.INTERLINKED_HUB_PROCESS !== "0") {
+    const status = cli("hub", "status").stdout;
+    ok(status.includes("the human operator"), "hub process knows the terminal is the human", status.split("\n")[1] || status);
+    const asAgent = agentCli("inbox");
+    ok(asAgent.status !== 0 && (asAgent.stderr + asAgent.stdout).includes("inside an agent's harness"), "the CLI in an agent's shell can't act as the human", (asAgent.stderr || asAgent.stdout).trim().split("\n")[0]);
+  }
 
   // File reservation enforced through the PreToolUse hook.
   await b.tool("reserve_files", { paths: ["db/"], reason: "migration" });
@@ -113,7 +128,7 @@ try {
 
   // HTTP dashboard state.
   const port = 17700 + Math.floor(Math.random() * 200);
-  const srv = spawn(BIN, ["serve", "--listen", `127.0.0.1:${port}`], { env, stdio: "ignore" });
+  const srv = spawn(process.execPath, ["-e", TERMINAL, BIN, "serve", "--listen", `127.0.0.1:${port}`], { env, stdio: "ignore" });
   let state = null;
   for (let i = 0; i < 30 && !state; i++) {
     await new Promise((r) => setTimeout(r, 150));
@@ -122,7 +137,7 @@ try {
   ok(state && state.agents.length >= 2 && state.messages.length >= 3, "dashboard /api/state", state ? `${state.agents.length} agents, ${state.messages.length} messages` : "no response");
   const foreign = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { Origin: "http://evil.example" } });
   ok(foreign.status === 403, "cross-origin request refused");
-  srv.kill();
+  killTree(srv);
 
   // Hook latency budget, relative to what a bare shell spawn costs on this
   // machine right now (antivirus and load can make any spawn slow).
@@ -149,7 +164,11 @@ try {
   failures++;
   console.error("FAIL  crashed:", e);
 } finally {
-  rmSync(HOME, { recursive: true, force: true });
+  // Stop this run's hub process (it would idle out), then clean up.
+  const hello = cli("hub", "status").stdout.match(/pid (\d+)/);
+  if (hello) { try { process.kill(Number(hello[1])); } catch {} }
+  await new Promise((r) => setTimeout(r, 400));
+  rmSync(HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   rmSync(PROJECT, { recursive: true, force: true });
 }
 console.log(failures ? `\n${failures} failure(s)` : "\nall checks passed");

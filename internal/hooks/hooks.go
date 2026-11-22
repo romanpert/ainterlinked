@@ -338,6 +338,9 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		// keep waking each other forever.
 		if !in.Auto {
 			ResetHolds(me.ID)
+			// The hub keeps who started the turn: what the agent does now is
+			// on the user's order.
+			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, User: true}, nil)
 		}
 		activity := "on a new request from the user"
 		if cfg.Presence.SharePrompts {
@@ -419,6 +422,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 			return Result{}, nil
 		}
 		BumpHolds(me.ID)
+		_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID}, nil) // now held open by peers
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Quiet: true}, nil)
 		return Result{Block: text}, nil
 	}

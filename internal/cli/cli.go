@@ -49,6 +49,7 @@ Use (as the human operator)
                                      (launch claude also enables push into idle sessions)
 
 Plumbing (called by harnesses)
+  hub [status]                       the hub process (clients start it themselves)
   mcp [--harness h]                  stdio MCP server
   hook <harness> <event>             lifecycle hook handler
 
@@ -60,6 +61,7 @@ Docs: https://github.com/romanpert/ainterlinked
 // Main runs the CLI and returns the exit code.
 func Main(args []string) int {
 	mcp.Version = Version
+	hub.Version = Version
 	if len(args) == 0 {
 		return run(overview)
 	}
@@ -83,7 +85,7 @@ func Main(args []string) int {
 		"enable": cmdEnable(true), "disable": cmdEnable(false), "config": cmdConfig,
 		"agents": cmdAgents, "ls": cmdAgents, "send": cmdSend, "inbox": cmdInbox,
 		"tasks": cmdTasks, "task": cmdTask, "locks": cmdLocks, "feed": cmdFeed, "watch": cmdFeed,
-		"serve": cmdServe,
+		"serve": cmdServe, "hub": cmdHub,
 	}
 	fn, ok := fns[cmd]
 	if !ok {

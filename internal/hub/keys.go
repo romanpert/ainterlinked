@@ -21,8 +21,8 @@ var actors = map[string]string{
 	"send": "from", "inbox": "agent", "unread": "agent", "wait": "agent",
 	"thread": "agent", "threads": "agent", "prefs": "agent", "set_prefs": "agent",
 	"task_create": "by", "task_update": "by", "task_claim": "agent", "task_want": "agent", "task_next": "agent",
-	"trespass": "writer",
-	"reserve":  "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
+	"trespass": "writer", "turn": "agent",
+	"reserve": "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
 	"note": "agent", "machine_sample": "agent",
 }
 
@@ -103,9 +103,11 @@ func (l *Local) Human(ctx context.Context, machine string) (core.Agent, error) {
 // Human returns the operator's agent through c, which must be this
 // machine's hub.
 func Human(ctx context.Context, c Client, machine string) (core.Agent, error) {
-	l, ok := c.(*Local)
+	h, ok := c.(interface {
+		Human(context.Context, string) (core.Agent, error)
+	})
 	if !ok {
 		return core.Agent{}, errors.New("the operator acts only through this machine's hub (the ainterlinked CLI or dashboard)")
 	}
-	return l.Human(ctx, machine)
+	return h.Human(ctx, machine)
 }

@@ -66,7 +66,10 @@ func (s *Store) RecordTrespass(ctx context.Context, r TrespassReq) (Task, error)
 		}
 		label, title := LabelRestitution, fmt.Sprintf("Make %s right with %s after a shell write", file, holder)
 		origin := "during a turn kept going by peer messages, not by the user"
-		if r.ByUser {
+		// The hub's own record of the turn wins: a claim that the user
+		// started it can only be taken down, never put up.
+		byUser := r.ByUser && heldIn(tx, me.ID) == 0
+		if byUser {
 			label, title = LabelReconcile, fmt.Sprintf("Reconcile %s with %s: written from the shell on the user's turn", file, holder)
 			origin = "during a turn the user started (the user's mandate: the user owns the repo)"
 		}
@@ -76,7 +79,7 @@ func (s *Store) RecordTrespass(ctx context.Context, r TrespassReq) (Task, error)
 		}
 		body := fmt.Sprintf("%s wrote to %s (reserved by %s, reason %q) from the shell (%s), %s. Agree with %s on what stays: restore their version, or hand them the change.",
 			me.Name, file, holder, orNone(reason), oneLine(prog, 40), origin, holder)
-		if !r.ByUser {
+		if !byUser {
 			body += fmt.Sprintf(" When done, set it to review with what you did: %s (or the human) closes it.", holder)
 		}
 		res, err := tx.Exec(`INSERT INTO tasks(board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,created_at,updated_at)

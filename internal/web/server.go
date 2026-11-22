@@ -23,7 +23,7 @@ var dashboard []byte
 
 // Server is the HTTP front of a local hub.
 type Server struct {
-	Hub     *hub.Local
+	Hub     hub.Client
 	Machine string
 	Version string
 	// Scan reports the harnesses on this machine (re-run at most once a
@@ -172,20 +172,20 @@ type state struct {
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st := s.Hub.Store
+	c := s.Hub // a client like any other: the hub process decides who it is
 	out := state{Machine: s.Machine, Version: s.Version}
-	var err error
-	if out.Agents, err = st.List(ctx, core.AgentFilter{IncludeOffline: true}); err != nil {
+	if err := c.Call(ctx, "agents", core.AgentFilter{IncludeOffline: true}, &out.Agents); err != nil {
 		writeJSON(w, 500, hub.Response{Error: err.Error()})
 		return
 	}
-	out.Tasks, _ = st.ListTasks(ctx, core.TaskFilter{Board: "*"})
-	out.Boards, _ = st.Boards(ctx)
-	out.Locks, _ = st.Locks(ctx, "")
-	out.Messages, _ = st.RecentMessages(ctx, 40)
-	out.Feed, _ = st.Feed(ctx, core.FeedReq{Limit: 80})
+	_ = c.Call(ctx, "tasks", core.TaskFilter{Board: "*"}, &out.Tasks)
+	_ = c.Call(ctx, "boards", hub.Empty{}, &out.Boards)
+	_ = c.Call(ctx, "locks", hub.ProjectParam{}, &out.Locks)
+	_ = c.Call(ctx, "messages", hub.LimitParam{Limit: 40}, &out.Messages)
+	_ = c.Call(ctx, "feed", core.FeedReq{Limit: 80}, &out.Feed)
 	out.Harnesses = s.harnesses()
-	if m, err := st.Machine(ctx); err == nil && m.SampledAt > 0 {
+	var m core.Machine
+	if err := c.Call(ctx, "machine", hub.Empty{}, &m); err == nil && m.SampledAt > 0 {
 		out.Load = &m
 	}
 	if out.Agents == nil {
@@ -233,8 +233,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, hub.Response{Error: err.Error()})
 		return
 	}
-	m, err := s.Hub.Store.Send(r.Context(), core.SendReq{From: me.ID, To: req.To, Body: req.Body})
-	if err != nil {
+	var m core.Message
+	if err := s.Hub.Call(r.Context(), "send", core.SendReq{From: me.ID, To: req.To, Body: req.Body}, &m); err != nil {
 		writeJSON(w, http.StatusOK, hub.Response{Error: err.Error()})
 		return
 	}

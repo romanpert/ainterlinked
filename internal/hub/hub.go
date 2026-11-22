@@ -12,7 +12,6 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
-	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
 // Client calls a hub method.
@@ -154,6 +153,7 @@ func Methods(s *core.Store) map[string]handler {
 		"task_claim":  op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.Claim(ctx, p.Agent, p.ID) }),
 		"task_want":   op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.WantTask(ctx, p.Agent, p.ID) }),
 		"trespass":    op(s.RecordTrespass),
+		"turn":        op(s.MarkTurn),
 		"facts": op(func(ctx context.Context, p FactsParam) (map[string]core.Facts, error) {
 			return s.AgentFacts(ctx, p.Viewer, p.Names)
 		}),
@@ -277,14 +277,5 @@ func Depart(ctx context.Context, c Client, id string) error {
 // busy for the database write lock instead of the default 10 s, so under
 // contention it fails fast instead of stalling the agent's tool call.
 func OpenWithin(cfg config.Config, busy time.Duration) (Client, error) {
-	st, err := core.Open(config.DBPath(), core.Options{
-		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
-		Machine: cfg.Machine,
-		Alive:   proc.AliveSet,
-		Busy:    busy,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return NewLocal(st), nil
+	return OpenAuto(cfg, busy)
 }
