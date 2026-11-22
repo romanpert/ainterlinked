@@ -8,6 +8,13 @@ import (
 	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
+// capped says whether the owner has set a cap. There is none unless the
+// owner sets one: what a session may spend is the owner's call, not ours.
+func capped(ctx context.Context, c hub.Client) bool {
+	var b core.Budget
+	return c.Call(ctx, "get_budget", struct{}{}, &b) == nil && b.SessionTokens > 0
+}
+
 // overBudget says why the agent must stop once its session has spent the
 // owner's cap; "" while under it, with no cap, or when the hub can't say
 // (an older hub). The hub reads the spend from the harness's transcript,

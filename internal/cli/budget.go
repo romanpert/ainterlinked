@@ -30,7 +30,7 @@ func cmdBudget(ctx context.Context, args []string) error {
 			return err
 		}
 		if b.SessionTokens == 0 {
-			fmt.Println("no cap: sessions spend what they need (ainterlinked budget 2M sets one)")
+			fmt.Println("no cap: sessions spend what they need (ainterlinked budget <tokens> sets one, e.g. 5M)")
 			return nil
 		}
 		fmt.Printf("one session may spend %s billed tokens (fresh input, cache writes, output)\n", core.FormatTokens(b.SessionTokens))

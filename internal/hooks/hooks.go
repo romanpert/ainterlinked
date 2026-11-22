@@ -359,9 +359,12 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		return Result{}, nil
 
 	case PreTool:
-		// The owner's money first: past the cap, nothing more runs.
-		if why := overBudget(ctx, c, me); why != "" {
-			return Result{Deny: why}, nil
+		// The owner's money first: past the cap, nothing more runs. With no
+		// cap set this is one read of the owner's terms, nothing more.
+		if capped(ctx, c) {
+			if why := overBudget(ctx, c, me); why != "" {
+				return Result{Deny: why}, nil
+			}
 		}
 		files := EditedFiles(in)
 		if len(files) == 0 {
