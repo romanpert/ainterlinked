@@ -121,3 +121,17 @@ func TestASmallerReadDoesntLowerTheRecord(t *testing.T) {
 		t.Fatalf("a larger read wasn't recorded: %d", sp.Billed())
 	}
 }
+
+// Trading billed tokens for cache reads (a forged read with more cache
+// reads and less output) doesn't get past "never lower": every figure is
+// compared on its own.
+func TestAReadCantTradeBilledTokensForCacheReads(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	a := reg(t, s, RegisterReq{Harness: "codex", Project: "api", AnchorPID: 1, SessionID: "c1"})
+	_ = s.RecordSpend(ctx, a.ID, transcript.Ledger{transcript.CauseOwn: {In: 900_000, Out: 100_000}})
+	_ = s.RecordSpend(ctx, a.ID, transcript.Ledger{transcript.CauseOwn: {In: 10, CacheRead: 50_000_000}})
+	if sp, _ := s.GetSpend(ctx, SpendReq{Agent: a.ID}); sp.Billed() != 1_000_000 || sp.Own.CacheRead != 0 {
+		t.Fatalf("traded: %+v", sp.Own)
+	}
+}

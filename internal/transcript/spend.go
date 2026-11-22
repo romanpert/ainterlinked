@@ -176,15 +176,29 @@ var header = regexp.MustCompile(`<<peer-message #(\d+) from [^\n]*\| fence ([0-9
 // heldFor returns the ids of the ainterlinked messages a Stop hook held the
 // turn open for: each fenced message's header, skipping its body up to its
 // closing fence, so text inside a body (the sender's) can't name others.
-// Without a closing fence the rest is not read.
+// One delivery has one fence nonce, which the hub strips from bodies and
+// subjects: every header must carry the first one's (only the hub's own
+// preamble comes before it). Group briefs, one sender-written line each,
+// come after the messages and aren't read. Without a closing fence the
+// rest is not read.
 func heldFor(text string) []string {
+	if i := strings.Index(text, "<<peer-briefs:"); i >= 0 {
+		text = text[:i]
+	}
 	var ids []string
+	nonce := ""
 	for {
 		m := header.FindStringSubmatchIndex(text)
 		if m == nil {
 			return ids
 		}
 		id, fence := text[m[2]:m[3]], text[m[4]:m[5]]
+		if nonce == "" {
+			nonce = fence
+		}
+		if fence != nonce {
+			return ids
+		}
 		rest := text[m[1]:]
 		end := strings.Index(rest, "<<end #"+id+" | fence "+fence)
 		if end < 0 {
