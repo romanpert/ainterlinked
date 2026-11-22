@@ -2,14 +2,17 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
 // startServer runs a hub process server in-process on a short socket path
@@ -31,6 +34,7 @@ func startServer(t *testing.T, anchor func(pid int) (int, string)) (*Server, str
 	st.SingleConn()
 	srv := NewServer(st)
 	srv.Anchor = anchor
+	srv.Ancestry = func(int) ([]proc.Info, error) { return nil, nil } // tests set the chain
 	sock := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -105,6 +109,53 @@ func TestTheHumanIsWhoeverIsOutsideEveryHarness(t *testing.T) {
 	}
 	if _, err := dial(t, sock).Human(ctx, "box"); err == nil {
 		t.Fatal("a registered agent's tree became the human")
+	}
+}
+
+// The whole chain of ancestors counts, not the nearest program: an agent
+// wrapping the CLI in node (or any program interlinked doesn't skip) is
+// still inside its harness, and so is a process under a registered agent's
+// harness whatever that harness's executable is called.
+func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
+	var mu sync.Mutex
+	anchor, chain := 7100, []proc.Info{{PID: 7100, PPID: 4242, Name: "node"}, {PID: 4242, PPID: 900, Name: "claude"}, {PID: 900, Name: "explorer"}}
+	var chainErr error
+	set := func(a int, c []proc.Info, err error) { mu.Lock(); anchor, chain, chainErr = a, c, err; mu.Unlock() }
+	srv, sock := startServer(t, func(int) (int, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range chain {
+			if p.PID == anchor {
+				return anchor, p.Name
+			}
+		}
+		return anchor, ""
+	})
+	srv.Ancestry = func(int) ([]proc.Info, error) { mu.Lock(); defer mu.Unlock(); return chain, chainErr }
+	ctx := context.Background()
+	if _, err := dial(t, sock).Human(ctx, "box"); err == nil || !strings.Contains(err.Error(), "inside an agent's harness") {
+		t.Fatalf("the CLI wrapped in node under claude became the human: %v", err)
+	}
+	// A harness interlinked doesn't know by name, but registered: gemini
+	// runs as node (pid 5000). A process under it is that agent's.
+	set(5000, []proc.Info{{PID: 5000, PPID: 900, Name: "node"}, {PID: 900, Name: "explorer"}}, nil)
+	var gem core.Agent
+	if err := dial(t, sock).Call(ctx, "register", core.RegisterReq{Harness: "gemini", Project: "shop", ProjectPath: "/w/shop", SessionID: "g1"}, &gem); err != nil {
+		t.Fatalf("gemini: %+v %v", gem, err)
+	}
+	set(7200, []proc.Info{{PID: 7200, PPID: 5000, Name: "go"}, {PID: 5000, PPID: 900, Name: "node"}, {PID: 900, Name: "explorer"}}, nil)
+	if _, err := dial(t, sock).Human(ctx, "box"); err == nil {
+		t.Fatal("a process under a registered agent's harness became the human")
+	}
+	// A chain that can't be read is not the human's either.
+	set(7300, nil, errors.New("gone"))
+	if _, err := dial(t, sock).Human(ctx, "box"); err == nil {
+		t.Fatal("an unreadable chain became the human")
+	}
+	// A terminal outside every harness is.
+	set(7400, []proc.Info{{PID: 7400, PPID: 900, Name: "windowsterminal"}, {PID: 900, Name: "explorer"}}, nil)
+	if h, err := dial(t, sock).Human(ctx, "box"); err != nil || h.Name != "human" {
+		t.Fatalf("the human's own terminal: %+v %v", h, err)
 	}
 }
 

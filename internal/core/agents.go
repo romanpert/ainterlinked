@@ -150,6 +150,44 @@ func (s *Store) withoutLiveAnchors(stale []Agent) []Agent {
 	return out
 }
 
+// resumable finds the agent a session id resumes: the latest one with it
+// whose harness is gone (a restart, a resumed session) or is the caller's.
+// Never one still running as another process: a session id can be read, so
+// it alone isn't who you are.
+func (s *Store) resumable(tx *sql.Tx, r RegisterReq) (Agent, error) {
+	rows, err := tx.Query(`SELECT `+agentCols+` FROM agents WHERE session_id=? AND (harness=? OR (?='copilot' AND harness IN ('copilot','copilot-cli','vscode')))
+		ORDER BY last_seen DESC LIMIT 8`, r.SessionID, r.Harness, family(r.Harness))
+	if err != nil {
+		return Agent{}, err
+	}
+	var found []Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			rows.Close()
+			return Agent{}, err
+		}
+		found = append(found, a)
+	}
+	rows.Close()
+	for _, a := range found {
+		if a.AnchorPID <= 0 || a.AnchorPID == r.AnchorPID || !s.anchorLive(a) {
+			return a, nil
+		}
+	}
+	return Agent{}, sql.ErrNoRows
+}
+
+// anchorLive reports whether a's harness process still runs (or, where
+// that can't be probed, whether a is online). Unknown counts as running.
+func (s *Store) anchorLive(a Agent) bool {
+	if s.alive == nil || a.Machine != s.machine {
+		return a.Online
+	}
+	alive, err := s.alive([]int{a.AnchorPID})
+	return err != nil || alive[a.AnchorPID]
+}
+
 func ukey(r RegisterReq) string {
 	switch {
 	case r.AnchorPID > 0:
@@ -330,10 +368,7 @@ func (s *Store) Register(ctx context.Context, r RegisterReq) (Agent, error) {
 		row := tx.QueryRow(`SELECT `+agentCols+` FROM agents WHERE online=1 AND ukey=?`, key)
 		a, err := scanAgent(row)
 		if errors.Is(err, sql.ErrNoRows) && r.SessionID != "" {
-			fam := family(r.Harness)
-			row = tx.QueryRow(`SELECT `+agentCols+` FROM agents WHERE session_id=? AND (harness=? OR (?='copilot' AND harness IN ('copilot','copilot-cli','vscode')))
-				ORDER BY last_seen DESC LIMIT 1`, r.SessionID, r.Harness, fam)
-			a, err = scanAgent(row)
+			a, err = s.resumable(tx, r)
 		}
 		switch {
 		case errors.Is(err, sql.ErrNoRows):

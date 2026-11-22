@@ -44,10 +44,21 @@ func (s *Store) DirectUsers(ctx context.Context, ids []string) (int, error) {
 	return n, err
 }
 
-// AnchorTaken reports whether a harness process anchors a registered agent
-// other than the human: such a process and its children act as that agent.
-func (s *Store) AnchorTaken(ctx context.Context, anchor int) (bool, error) {
+// AnchorTaken reports whether any of these processes anchors an online
+// agent (the human aside).
+func (s *Store) AnchorTaken(ctx context.Context, anchors ...int) (bool, error) {
+	if len(anchors) == 0 {
+		return false, nil
+	}
+	q := `SELECT count(*) FROM agents WHERE harness<>'human' AND online=1 AND anchor_pid IN (?` + strings.Repeat(",?", len(anchors)-1) + `)`
+	args := make([]any, len(anchors))
+	for i, a := range anchors {
+		args[i] = a
+	}
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM agents WHERE anchor_pid=? AND harness<>'human' AND online=1`, anchor).Scan(&n)
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n > 0, err
 }
+
+// MachineName is the machine this hub runs on.
+func (s *Store) MachineName() string { return s.machine }

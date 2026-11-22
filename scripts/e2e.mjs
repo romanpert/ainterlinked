@@ -6,7 +6,7 @@
 //
 //   node scripts/e2e.mjs [path/to/interlinked]
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -59,13 +59,38 @@ function hook(harness, event, payload) {
   const r = spawnSync(shell, ["-c", cmd], { env, cwd: PROJECT, input: JSON.stringify({ cwd: PROJECT, ...payload }), encoding: "utf8" });
   return { out: r.stdout.trim() ? JSON.parse(r.stdout) : null, ms: Date.now() - t0, code: r.status };
 }
-// The human operator types in a terminal of their own, not inside an agent's
-// harness: run the CLI from a separate process, as a terminal would. The
-// hub process tells the two apart from the kernel's process tree.
-const TERMINAL = "const c=require('child_process').spawn(process.argv[1],process.argv.slice(2),{stdio:'inherit'});c.on('exit',(x)=>process.exit(x??1))";
-const cli = (...args) => spawnSync(process.execPath, ["-e", TERMINAL, BIN, ...args], { env, cwd: PROJECT, encoding: "utf8" });
-// The same CLI run straight from the "harness" (an agent's shell).
+// The human operator types in a terminal of their own, outside every agent's
+// harness, and the hub process checks the caller's whole chain of parents.
+// This test may itself run inside an agent (a developer's Claude Code), so
+// "the human" here is the CLI started from a process whose parent has exited:
+// detached from every harness. (The same detaching is open to an agent on the
+// same OS account: the real boundary for that is running the hub as another
+// account.)
+const ORPHAN = `
+const cp=require('child_process'),fs=require('fs');
+const [bin,out,...args]=process.argv.slice(1);
+if(process.env.IL_STAGE!=='2'){
+  cp.spawn(process.execPath,['-e',process.env.IL_ORPHAN,...process.argv.slice(1)],{detached:true,stdio:'ignore',env:{...process.env,IL_STAGE:'2'}}).unref();
+  process.exit(0);
+}
+const ppid=process.ppid;
+for(let i=0;i<200;i++){try{process.kill(ppid,0)}catch{break}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25)}
+const r=cp.spawnSync(bin,args,{encoding:'utf8'});
+fs.writeFileSync(out+'.tmp',JSON.stringify({status:r.status,stdout:r.stdout||'',stderr:r.stderr||''}));
+fs.renameSync(out+'.tmp',out);`;
+let cliRuns = 0;
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const cli = (...args) => {
+  const out = join(HOME, `cli-${++cliRuns}.json`);
+  spawnSync(process.execPath, ["-e", ORPHAN, BIN, out, ...args], { env: { ...env, IL_ORPHAN: ORPHAN }, cwd: PROJECT });
+  for (let i = 0; i < 600 && !existsSync(out); i++) sleepSync(25);
+  return existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : { status: -1, stdout: "", stderr: "the detached CLI never answered" };
+};
+// The same CLI run straight from the "harness" (an agent's shell), and
+// wrapped in another program (node) by it: both are that agent.
 const agentCli = (...args) => spawnSync(BIN, args, { env, cwd: PROJECT, encoding: "utf8" });
+const WRAP = "const c=require('child_process').spawn(process.argv[1],process.argv.slice(2),{stdio:'inherit'});c.on('exit',(x)=>process.exit(x??1))";
+const wrappedCli = (...args) => spawnSync(process.execPath, ["-e", WRAP, BIN, ...args], { env, cwd: PROJECT, encoding: "utf8" });
 const killTree = (p) => (process.platform === "win32" ? spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)]) : p.kill());
 
 try {
@@ -110,6 +135,8 @@ try {
     ok(status.includes("the human operator"), "hub process knows the terminal is the human", status.split("\n")[1] || status);
     const asAgent = agentCli("inbox");
     ok(asAgent.status !== 0 && (asAgent.stderr + asAgent.stdout).includes("inside an agent's harness"), "the CLI in an agent's shell can't act as the human", (asAgent.stderr || asAgent.stdout).trim().split("\n")[0]);
+    const wrapped = wrappedCli("inbox");
+    ok(wrapped.status !== 0 && (wrapped.stderr + wrapped.stdout).includes("inside an agent's harness"), "nor the CLI wrapped in another program by the agent", (wrapped.stderr || wrapped.stdout).trim().split("\n")[0]);
   }
 
   // File reservation enforced through the PreToolUse hook.
@@ -128,7 +155,7 @@ try {
 
   // HTTP dashboard state.
   const port = 17700 + Math.floor(Math.random() * 200);
-  const srv = spawn(process.execPath, ["-e", TERMINAL, BIN, "serve", "--listen", `127.0.0.1:${port}`], { env, stdio: "ignore" });
+  const srv = spawn(process.execPath, ["-e", WRAP, BIN, "serve", "--listen", `127.0.0.1:${port}`], { env, stdio: "ignore" });
   let state = null;
   for (let i = 0; i < 30 && !state; i++) {
     await new Promise((r) => setTimeout(r, 150));

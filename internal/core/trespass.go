@@ -24,6 +24,9 @@ type TrespassReq struct {
 	// ByUser: the turn was started by the user (the user's order, the
 	// user's act); otherwise peer messages kept it going.
 	ByUser bool `json:"by_user,omitempty"`
+	// Transcript is the harness's record of the session (the hook payload's
+	// transcript_path): where the hub checks a ByUser claim.
+	Transcript string `json:"transcript,omitempty"`
 }
 
 // reservedLabels are set by the hub only.
@@ -49,6 +52,8 @@ func (s *Store) RecordTrespass(ctx context.Context, r TrespassReq) (Task, error)
 	if err != nil {
 		return Task{}, err
 	}
+	// Whose act it was, decided before the write lock: it may read a file.
+	byUser := r.ByUser && s.userTurn(ctx, me, r.Transcript)
 	var out Task
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.ms()
@@ -66,9 +71,6 @@ func (s *Store) RecordTrespass(ctx context.Context, r TrespassReq) (Task, error)
 		}
 		label, title := LabelRestitution, fmt.Sprintf("Make %s right with %s after a shell write", file, holder)
 		origin := "during a turn kept going by peer messages, not by the user"
-		// The hub's own record of the turn wins: a claim that the user
-		// started it can only be taken down, never put up.
-		byUser := r.ByUser && heldIn(tx, me.ID) == 0
 		if byUser {
 			label, title = LabelReconcile, fmt.Sprintf("Reconcile %s with %s: written from the shell on the user's turn", file, holder)
 			origin = "during a turn the user started (the user's mandate: the user owns the repo)"

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+
+	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
 // Who started an agent's current turn: the user (a prompt) or peers (the
@@ -22,6 +24,9 @@ type TurnReq struct {
 
 func turnKey(agent string) string { return "turn_held:" + agent }
 
+// heldAtKey keeps when peers last held the agent's turn open (hub clock).
+func heldAtKey(agent string) string { return "turn_held_at:" + agent }
+
 // MarkTurn records a turn event and returns how many times in a row the
 // turn has been held open by peers since the user last prompted.
 func (s *Store) MarkTurn(ctx context.Context, r TurnReq) (int, error) {
@@ -35,7 +40,10 @@ func (s *Store) MarkTurn(ctx context.Context, r TurnReq) (int, error) {
 	var n int
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		n = heldIn(tx, r.Agent) + 1
-		_, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, turnKey(r.Agent), strconv.Itoa(n))
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, turnKey(r.Agent), strconv.Itoa(n)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, heldAtKey(r.Agent), strconv.FormatInt(s.ms(), 10))
 		return err
 	})
 	return n, err
@@ -60,4 +68,24 @@ func heldIn(tx *sql.Tx, agent string) int {
 	}
 	n, _ := strconv.Atoi(v)
 	return n
+}
+
+// userTurn decides whether the agent's current turn is the user's. A
+// harness whose transcript interlinked reads (Claude Code) answers it: the
+// user's latest prompt must be newer than any peer-started turn and than
+// the last time the hub saw peers hold the turn open. A hook reporting
+// "the user prompted" can't change that, since an agent can run a hook
+// command itself. Other harnesses: the hub's count of held turns, reset
+// by the hook on a user prompt (that reset is the hooks' word).
+func (s *Store) userTurn(ctx context.Context, a Agent, path string) bool {
+	if o, known := transcript.Read(a.Harness, path, a.SessionID); known {
+		var heldAt int64
+		var v string
+		if s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, heldAtKey(a.ID)).Scan(&v) == nil {
+			heldAt, _ = strconv.ParseInt(v, 10, 64)
+		}
+		return o.User > 0 && o.User > o.Peer && o.User > heldAt
+	}
+	n, err := s.PeerHeld(ctx, a.ID)
+	return err == nil && n == 0
 }

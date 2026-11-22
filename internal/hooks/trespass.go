@@ -191,7 +191,8 @@ func trespass(ctx context.Context, c hub.Client, me core.Agent, in Input) string
 		// The hub checks the reservation and keeps the record: an agent
 		// can't make one up against someone else.
 		var t core.Task
-		_ = c.Call(ctx, "trespass", core.TrespassReq{Writer: me.ID, LockID: l.ID, File: f, Program: commandProgram(cmd), ByUser: byUser}, &t)
+		_ = c.Call(ctx, "trespass", core.TrespassReq{Writer: me.ID, LockID: l.ID, File: f, Program: commandProgram(cmd), ByUser: byUser,
+			Transcript: str(in.raw, "transcript_path")}, &t) // where the hub checks whose turn it was
 		_ = c.Call(ctx, "send", core.SendReq{From: me.ID, To: l.Agent, Subject: "I wrote to your reserved " + rel,
 			Body: fmt.Sprintf("interlinked noticed: my shell command (%s) wrote to %s, which you hold, %s. Task #%d is open for me to make it right with you; tell me what you need.",
 				commandProgram(cmd), rel, origin, t.ID)}, nil)

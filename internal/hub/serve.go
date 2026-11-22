@@ -30,6 +30,8 @@ type Server struct {
 	// Anchor resolves a PID to its harness process (proc.AnchorOf by
 	// default; tests replace it).
 	Anchor func(pid int) (int, string)
+	// Ancestry lists a PID's ancestors (proc.Ancestry; tests replace it).
+	Ancestry func(pid int) ([]proc.Info, error)
 
 	active atomic.Int64 // requests in flight
 	conns  atomic.Int64
@@ -40,7 +42,7 @@ type Server struct {
 
 // NewServer serves st.
 func NewServer(st *core.Store) *Server {
-	return &Server{Store: st, methods: Methods(st), Anchor: proc.AnchorOf, registered: map[string]bool{}}
+	return &Server{Store: st, methods: Methods(st), Anchor: proc.AnchorOf, Ancestry: proc.Ancestry, registered: map[string]bool{}}
 }
 
 func (s *Server) registeredIDs() []string {
@@ -162,6 +164,9 @@ func (s *Server) handle(ctx context.Context, p *peer, method string, raw json.Ra
 			return nil, errors.New("refused: the hub can't tell which session this process belongs to")
 		}
 		r.AnchorPID = p.anchor // the kernel's answer, not the caller's
+		if m := s.Store.MachineName(); m != "" {
+			r.Machine = m // this hub's machine, not the caller's word
+		}
 		b, err := json.Marshal(r)
 		if err != nil {
 			return nil, err
@@ -186,15 +191,26 @@ func (s *Server) handle(ctx context.Context, p *peer, method string, raw json.Ra
 
 func (s *Server) pidSelf() int { return os.Getpid() }
 
-// agentAnchored: the caller's harness is an agent's, registered or known
-// by name. Such a caller is never the human.
+// agentAnchored: the caller runs inside an agent's harness. Such a caller
+// is never the human. The whole chain of ancestors counts, not just the
+// nearest program: the CLI wrapped in node (or anything else) by an agent
+// is still inside that agent's harness. When the chain can't be read, the
+// answer is "agent": unknown is not the human.
 func (s *Server) agentAnchored(ctx context.Context, p *peer) bool {
-	if p.anchor <= 0 {
-		return true // unknown is not the human
-	}
-	if proc.IsHarness(p.harness) {
+	if p.anchor <= 0 || proc.IsHarness(p.harness) {
 		return true
 	}
-	taken, err := s.Store.AnchorTaken(ctx, p.anchor)
+	chain, err := s.Ancestry(p.pid)
+	if err != nil {
+		return true
+	}
+	pids := []int{p.anchor}
+	for _, a := range chain {
+		if proc.IsHarness(a.Name) {
+			return true
+		}
+		pids = append(pids, a.PID)
+	}
+	taken, err := s.Store.AnchorTaken(ctx, pids...)
 	return err != nil || taken
 }
