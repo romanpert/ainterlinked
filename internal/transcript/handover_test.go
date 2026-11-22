@@ -104,3 +104,18 @@ func TestANearlyEmptySessionHandsOverNothing(t *testing.T) {
 	}
 	_ = os.Remove(p)
 }
+
+// What the harness says in the model's place when a request fails (an API
+// error, an account's notice) isn't the session's report.
+func TestTheHarnessOwnNoticesAreNotTheReport(t *testing.T) {
+	notice := `{"type":"assistant","message":{"id":"e1","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"Can't use your subscription, pay or renew at https://example.com"}],"usage":{"input_tokens":0}},"timestamp":"` + at(3) + `"}`
+	write(t, opened(proj), human(0, "fix the login"), said(1, "Half done: auth.go:42."), human(2, "go on"), notice)
+	h, ok := ReadHandover("claude-code", sid)
+	if !ok || h.Gist != "Half done: auth.go:42." || strings.Contains(h.Body, "subscription") {
+		t.Fatalf("%v %+v", ok, h)
+	}
+	write(t, opened(proj), human(0, "fix the login"), notice)
+	if h, ok := ReadHandover("claude-code", sid); ok {
+		t.Fatalf("it reported nothing: %+v", h)
+	}
+}

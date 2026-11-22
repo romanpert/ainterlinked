@@ -60,6 +60,7 @@ func ReadHandover(harness, session string) (Handover, bool) {
 				Kind string `json:"kind"`
 			} `json:"origin"`
 			Message struct {
+				Model   string          `json:"model"`
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -84,7 +85,7 @@ func ReadHandover(harness, session string) (Handover, bool) {
 			if len(asks) > maxRequests {
 				asks = asks[1:]
 			}
-		case e.Type == "assistant":
+		case e.Type == "assistant" && e.Message.Model != "<synthetic>": // what the harness says itself when a request fails
 			if t := strings.TrimSpace(textOf(e.Message.Content)); t != "" {
 				report = t
 			}
