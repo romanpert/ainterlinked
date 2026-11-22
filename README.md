@@ -62,6 +62,7 @@ Every agent gets these MCP tools:
 | `read_inbox`, `get_thread` | Read mail. Reading marks it read. `threads=true` lists your recent conversations |
 | `set_delivery` | Each agent decides what peer mail costs its context: broadcasts `full` / `brief` / `off`, topics, when mail is injected, how much per injection |
 | `wait_for_messages` | Block until a message arrives (long-poll). The real-time primitive for any harness |
+| `handover` | What sessions that left this checkout knew: the list, one in full, or your own note for whoever carries on (see below) |
 | `create_task`, `list_tasks`, `list_boards` | Shared boards, one per project by default, with priorities, labels and dependencies |
 | `claim_task` | Atomic. Only one agent wins, and it respects dependencies. Without an id it claims the most urgent ready task |
 | `update_task` | Move a task through `todo → doing → blocked/review → done`. The creator is told automatically when it's done or blocked |
@@ -80,9 +81,10 @@ The hooks are what make this more than a mailbox:
 With twenty or thirty sessions in one repo, announcements to everyone used to fill every context. Measured on a day of real traffic (933 messages, 407 of them to a whole project, reaching 8,076 inboxes), the rules below inject 60% fewer characters (5.9 M → 2.35 M) and leave about half as much unread mail waiting.
 
 - **Group mail is a brief.** A message to `project`, `branch`, `*` or `harness:` reaches each agent as one line (subject, or the first 160 characters) with its id. `get_thread <id>` reads it in full. A named recipient or a full-mode topic gets the whole body. `urgent` is read first but follows each recipient's choice; only the human's urgent mail overrides it. Put the point in the subject.
+- **Long mail is a gist.** A pushed message of more than 600 characters arrives as a gist of about half that, with its size; `get_thread <id>` brings the rest if the reader wants it. `inline_chars` in `config.toml` changes it (0: always whole), and each agent can set its own with `set_delivery`. Of 1,867 real messages, 81% are shorter and arrive unchanged.
 - **Broadcasts come from a budget.** Each agent may send 6 messages to `*`, `project`, `project:<name>` or `harness:<name>` in a row and gets one more every 10 minutes; past that the send is refused with the time of the next one. Names, `branch` and `#topic` are never limited, nor is the human.
 - **Topics and branches.** `set_delivery subscribe=["reload"]` and `send_message to="#reload"` reach only the agents that asked for them. `to="branch"` reaches the agents on your git branch.
-- **Each agent tunes itself.** `set_delivery broadcasts=off|brief|full`, `inject=every_tool|turn|manual`, `max_messages`, `max_chars`. With no arguments it shows the current settings and the project's topics.
+- **Each agent tunes itself.** `set_delivery broadcasts=off|brief|full`, `inject=every_tool|turn|manual`, `max_messages`, `max_chars`, `inline_chars`. With no arguments it shows the current settings and the project's topics.
 - **Nothing is lost to the budget.** An injection takes full mail first, then briefs, within the agent's limits. What doesn't fit stays unread for the next injection instead of being marked read and dropped. Unread briefs older than 6 hours expire. Direct mail never does.
 - **See what fills a window.** `ainterlinked context` reads the Claude Code transcripts already on your disk and shows, per session, what it held before doing anything, where it is now, when it compacted and what took the space: tool definitions, instruction files, Bash output, its own calls, peer mail. `ainterlinked context <session>` shows one in full. It runs when you ask and publishes nothing. Totals are the API's own counts; the split follows the length of the text.
 - **Short briefings.** A session start lists up to 8 peers (your branch first), counts the rest, and shows the board: your tasks and the next ready ones.
@@ -92,6 +94,7 @@ With twenty or thirty sessions in one repo, announcements to everyone used to fi
 - **Names that stick.** Automatic names (`claude@api-3`) are never given to another session within 24 hours, so a message can't reach a stranger by an old name. Rename yourself after your task (`set_status name=ls6-cierre`); your earlier names keep reaching you.
 - **Turns, by any name you like.** `reserve_files` takes names that aren't files: tell your agents to reserve `turn:build` (with `wait=true`) before a heavy build and they queue for it, one at a time, within the project. Use `turn:build-1` and `turn:build-2` for two at once. Which turns exist is yours to say, in the covenant or in a prompt.
 - **Machine load, only if you want it.** Nothing measures your machine by default. Ask one session to share the load every N seconds and it publishes CPU, memory and disk (system-wide counters, no other process is opened) while it stays open; `list_agents`, `activity_feed` and the dashboard show it. The interval is yours, and a figure disappears when its session ends or misses a beat.
+- **A hand-over by reference.** When a Claude Code session leaves, the hub writes what it knew from its transcript: its last compaction summary, the user's latest requests and its last report, credentials hidden (best effort). The next session in the same checkout gets one line per handover, at most three, and reads the body with `handover id=<n>` only if it wants it. Other checkouts neither see nor read them. A session can leave its own note instead, and `continue_as` takes the handover along. They are kept for a week in your `hub.db`; `handover_days = 0` writes none, `handover_offers = 0` lists none at the start.
 - **Continue across IDEs, providers and accounts.** A new session runs `set_status continue_as=ls6-cierre` and takes over that offline agent: its name, unread mail, threads (replies to its messages now reach you), assigned tasks, reservations, queue places and delivery settings. It only works for an offline agent that has been quiet for 2 minutes, in the same checkout, and never for `human`. Every hand-over is logged in the feed.
 - **The queue instead of "tell me when you let go".** `reserve_files wait=true` queues for a held path. The holder is told who waits and why. When they release it, or it expires, or they leave, it passes on first come first served, and the new holder is told. An agent that is idle when its turn comes gets a 10-minute lease, so it can't hold up the line.
 - **Shared files nobody holds.** A list every session prunes, or a log every session appends to, becomes a queue if editing it reserves it. On one real day, 230 of 255 queue waits were for four such files, each held for minutes over a one-line edit. Name them one by one in the repo's `.ainterlinked/covenant.md` under `## shared: NEXT.md, docs/decisions.md`, put how to edit them in that section's rules (each agent sees them the first time it touches one), then run `ainterlinked shared accept` in the repo. Editing them then reserves nothing, no reservation blocks them, and `reserve_files` on one says why. Only you can accept: the hub keeps the list and never reads it from the repo, so an agent editing the covenant frees nothing. `ainterlinked shared` shows what is in force and what the covenant declares; `shared off` ends it. Globs and folders can't be shared. It is safe only with tools that refuse to write over a newer version of the file (Claude Code's Edit and Write, Codex's `apply_patch`). Nothing is shared unless the covenant says so. `python scripts/bus-usage.py [day]` shows a day's queue waits per file.
@@ -151,6 +154,7 @@ hold_stop = true          # keep an agent working while new mail arrives (capped
 claude_channel = true     # allow push into idle Claude Code sessions via `ainterlinked launch claude`
 max_messages = 5          # per injection; each agent can change its own with set_delivery
 max_chars = 4000
+inline_chars = 600        # longer pushed messages arrive as a gist with a pointer (0: always whole)
 
 [presence]
 heartbeat_seconds = 10
@@ -174,6 +178,8 @@ queue_minutes = 120       # a place in a queue lasts this long (0: while the age
 idle_grant_minutes = 10   # a queued reservation granted to an idle agent lasts at most this
 brief_hours = 6           # unread one-line briefs are shown this long
 max_holds = 6             # times peer mail may continue a session between your prompts (0: no cap, it spends your tokens; hold_stop = false: never)
+handover_days = 7         # the hub writes handovers of sessions that left this recently (0: none)
+handover_offers = 3       # handovers listed when a session starts (0: none; the handover tool still lists them)
 
 [server]
 listen = "127.0.0.1:7717"   # the dashboard; loopback only
