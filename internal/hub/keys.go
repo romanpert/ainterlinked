@@ -21,7 +21,7 @@ var actors = map[string]string{
 	"send": "from", "inbox": "agent", "unread": "agent", "wait": "agent",
 	"thread": "agent", "threads": "agent", "prefs": "agent", "set_prefs": "agent",
 	"task_create": "by", "task_update": "by", "task_claim": "agent", "task_want": "agent", "task_next": "agent",
-	"trespass": "writer", "turn": "agent",
+	"trespass": "writer", "turn": "agent", "spend": "agent", "budget": "by",
 	"reserve": "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
 	"note": "agent", "machine_sample": "agent",
 }
@@ -31,7 +31,7 @@ var actors = map[string]string{
 var reads = map[string]bool{
 	"register": true, "agents": true, "agent": true, "resolve": true, "topics": true,
 	"waiters": true, "messages": true, "tasks": true, "facts": true, "boards": true,
-	"locks": true, "feed": true, "machine": true,
+	"locks": true, "feed": true, "machine": true, "get_budget": true,
 }
 
 var errHuman = errors.New(`harness "human" is the operator's and only the ainterlinked CLI or dashboard registers it; register as your own harness`)

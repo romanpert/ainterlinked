@@ -28,11 +28,18 @@ type Facts struct {
 	Broadcasts int `json:"broadcasts,omitempty"`
 	// The viewer's own messages this agent hasn't read yet.
 	UnreadFromViewer int `json:"unread_from_you,omitempty"`
+	// Tokens its sessions used (billed: cache reads aside), of those spent
+	// on turns peers started or held open, and what its mail made other
+	// agents spend. Read from the harnesses' transcripts (spend.go).
+	Tokens         int64 `json:"tokens,omitempty"`
+	TokensForPeers int64 `json:"tokens_for_peers,omitempty"`
+	TokensCaused   int64 `json:"tokens_caused,omitempty"`
 }
 
 // Empty says there's nothing to show.
 func (f Facts) Empty() bool {
-	return f.Taken == 0 && f.Trespass == 0 && len(f.Holds) == 0 && f.Broadcasts == 0 && f.UnreadFromViewer == 0
+	return f.Taken == 0 && f.Trespass == 0 && len(f.Holds) == 0 && f.Broadcasts == 0 && f.UnreadFromViewer == 0 &&
+		f.Tokens == 0 && f.TokensCaused == 0
 }
 
 // FactsWindow is how far back facts go: old deeds fade.
@@ -89,6 +96,9 @@ func (s *Store) AgentFacts(ctx context.Context, viewer string, names []string) (
 			args(viewer, since), func(f *Facts, v []int64) { f.UnreadFromViewer = int(v[0]) }); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.spendFacts(ctx, since, names, out); err != nil {
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT lower(agent_name), pattern FROM locks WHERE expires_at>? AND lower(agent_name) IN (`+in+`) ORDER BY id`, args(now)...)
 	if err != nil {

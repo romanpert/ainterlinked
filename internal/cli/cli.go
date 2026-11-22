@@ -44,6 +44,7 @@ Use (as the human operator)
   task add <title> [--board b] [--prio 0-3] [--after 1,2] [--label l] [--assign name]
   task claim|done|block|cancel|reopen <id> [--result text]
   locks                              active file reservations
+  budget [<tokens>|off]              cap what one session may spend (billed tokens, e.g. 2M)
   feed [-f] [-n 50]                  activity feed (-f follows)
   serve [--listen 127.0.0.1:port]    web dashboard for this machine
   launch <harness> [--name n] [--role r] [-- args]   start a harness with a fixed identity
@@ -86,7 +87,7 @@ func Main(args []string) int {
 		"enable": cmdEnable(true), "disable": cmdEnable(false), "config": cmdConfig,
 		"agents": cmdAgents, "ls": cmdAgents, "send": cmdSend, "inbox": cmdInbox,
 		"tasks": cmdTasks, "task": cmdTask, "locks": cmdLocks, "feed": cmdFeed, "watch": cmdFeed,
-		"serve": cmdServe, "hub": cmdHub,
+		"serve": cmdServe, "hub": cmdHub, "budget": cmdBudget,
 	}
 	fn, ok := fns[cmd]
 	if !ok {

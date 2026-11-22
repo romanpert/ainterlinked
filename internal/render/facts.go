@@ -60,6 +60,16 @@ func FactsLine(f core.Facts) string {
 	if f.Broadcasts > 0 {
 		parts = append(parts, fmt.Sprintf("%d broadcast%s", f.Broadcasts, plural(f.Broadcasts)))
 	}
+	if f.Tokens > 0 {
+		s := core.FormatTokens(f.Tokens) + " tokens used"
+		if f.TokensForPeers > 0 {
+			s += " (" + core.FormatTokens(f.TokensForPeers) + " at peers' request)"
+		}
+		parts = append(parts, s)
+	}
+	if f.TokensCaused > 0 {
+		parts = append(parts, "its mail had others spend "+core.FormatTokens(f.TokensCaused)+" tokens")
+	}
 	if f.UnreadFromViewer > 0 {
 		parts = append(parts, fmt.Sprintf("%d of your messages unread", f.UnreadFromViewer))
 	}

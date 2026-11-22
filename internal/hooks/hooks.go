@@ -359,6 +359,10 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		return Result{}, nil
 
 	case PreTool:
+		// The owner's money first: past the cap, nothing more runs.
+		if why := overBudget(ctx, c, me); why != "" {
+			return Result{Deny: why}, nil
+		}
 		files := EditedFiles(in)
 		if len(files) == 0 {
 			return Result{}, nil
@@ -415,6 +419,12 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		}
 		p := prefs()
 		if !ShouldInject(p, d, AtStop) {
+			return Result{}, nil
+		}
+		// Past the owner's cap a turn isn't kept going for peers: that would
+		// spend the owner's tokens on others' requests. (The read also
+		// brings the session's spend up to date at the end of each turn.)
+		if overBudget(ctx, c, me) != "" {
 			return Result{}, nil
 		}
 		// Only mail addressed to this agent by name keeps the turn going: a

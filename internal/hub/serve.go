@@ -13,6 +13,7 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/proc"
+	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
 // Server is the hub process's side of the socket. Every connection gets its
@@ -38,11 +39,16 @@ type Server struct {
 
 	regMu      sync.Mutex
 	registered map[string]bool // agents registered through the hub process
+
+	// spender reads harnesses' transcripts for spend, each once and then
+	// only what's new: the hub process lives long enough for that.
+	spender *transcript.Spender
 }
 
 // NewServer serves st.
 func NewServer(st *core.Store) *Server {
-	return &Server{Store: st, methods: Methods(st), Anchor: proc.AnchorOf, Ancestry: proc.Ancestry, registered: map[string]bool{}}
+	return &Server{Store: st, methods: Methods(st), Anchor: proc.AnchorOf, Ancestry: proc.Ancestry, registered: map[string]bool{},
+		spender: transcript.NewSpender()}
 }
 
 func (s *Server) registeredIDs() []string {
@@ -177,6 +183,9 @@ func (s *Server) handle(ctx context.Context, p *peer, method string, raw json.Ra
 	if err != nil {
 		return nil, err
 	}
+	if method == "spend" && p.local.key(actor) != "" {
+		s.readSpend(ctx, actor) // the agent's own, read up to now
+	}
 	res, err := p.local.run(ctx, method, raw, p.local.key(actor))
 	if a, ok := res.(core.Agent); ok && err == nil && method == "register" {
 		p.local.remember(a)
@@ -190,6 +199,18 @@ func (s *Server) handle(ctx context.Context, p *peer, method string, raw json.Ra
 }
 
 func (s *Server) pidSelf() int { return os.Getpid() }
+
+// readSpend records what the agent's harness transcript says it has spent.
+// A transcript the hub can't find leaves the last record as it was.
+func (s *Server) readSpend(ctx context.Context, agent string) {
+	a, err := s.Store.Get(ctx, agent)
+	if err != nil || a.SessionID == "" {
+		return
+	}
+	if ledger, ok := s.spender.Read(a.Harness, a.SessionID); ok {
+		_ = s.Store.RecordSpend(ctx, a.ID, ledger)
+	}
+}
 
 // agentAnchored: the caller runs inside an agent's harness. Such a caller
 // is never the human. The whole chain of ancestors counts, not just the

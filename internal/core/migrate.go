@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS machine(
   lease_until INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO machine(id) VALUES(1);
+-- v7: tokens a session spent, by whose turn it was (spend.go): '' the
+-- user's, '~peer' another session's, '~held' mail since pruned, else the
+-- agent whose mail held the turn open. Absolute figures, replaced on read.
+CREATE TABLE IF NOT EXISTS spend(
+  agent_id TEXT NOT NULL,
+  cause TEXT NOT NULL,
+  tin INTEGER NOT NULL DEFAULT 0,
+  cwrite INTEGER NOT NULL DEFAULT 0,
+  cread INTEGER NOT NULL DEFAULT 0,
+  tout INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(agent_id, cause)
+);
+CREATE INDEX IF NOT EXISTS spend_cause ON spend(cause, updated_at);
 `
 
 // addedColumns are applied with ALTER TABLE when missing, so a database made
@@ -110,8 +124,8 @@ func upgraded(db *sql.DB) bool {
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine')`).Scan(&n)
-	return err == nil && n == 6
+	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine','spend')`).Scan(&n)
+	return err == nil && n == 7
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {

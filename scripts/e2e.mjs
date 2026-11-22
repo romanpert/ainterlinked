@@ -6,7 +6,7 @@
 //
 //   node scripts/e2e.mjs [path/to/ainterlinked]
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -14,7 +14,10 @@ import { createInterface } from "node:readline";
 const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/ainterlinked.exe" : "bin/ainterlinked"));
 const HOME = mkdtempSync(join(tmpdir(), "il-e2e-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "il-proj-"));
-const env = { ...process.env, AINTERLINKED_HOME: HOME };
+// Claude Code's directory for this run: the hub process reads the agents'
+// transcripts there (spend). Set before the first client starts the hub.
+const CLAUDE_DIR = join(HOME, "claude");
+const env = { ...process.env, AINTERLINKED_HOME: HOME, CLAUDE_CONFIG_DIR: CLAUDE_DIR };
 delete env.AINTERLINKED_ANCHOR_PID;
 let failures = 0;
 const ok = (cond, what, extra = "") => {
@@ -152,6 +155,27 @@ try {
   await b.tool("send_message", { to: nameA, body: "one more thing" });
   const stop = hook("claude-code", "Stop", { session_id: "sess-A" });
   ok(stop.out?.decision === "block" && stop.out.reason.includes("one more thing"), "Stop held with a direct message");
+
+  // The owner's cap. The hub process reads what A spent from Claude Code's
+  // own transcript of the session (here a stand-in), and A's next tool call
+  // is refused; an agent can't lift the cap.
+  if (env.AINTERLINKED_HUB_PROCESS !== "0") {
+    const dir = join(CLAUDE_DIR, "projects", "e2e");
+    mkdirSync(dir, { recursive: true });
+    const now = new Date().toISOString();
+    writeFileSync(join(dir, "sess-A.jsonl"), [
+      JSON.stringify({ type: "user", message: { role: "user", content: "build it" }, timestamp: now, origin: { kind: "human" } }),
+      JSON.stringify({ type: "assistant", message: { id: "msg_1", role: "assistant", content: [], usage: { input_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 900000, output_tokens: 49000 } }, timestamp: now }),
+    ].join("\n") + "\n");
+    const set = cli("budget", "40k");
+    ok(set.status === 0, "the owner sets a cap from their terminal", (set.stdout || set.stderr).trim());
+    const capped = hook("claude-code", "PreToolUse", { session_id: "sess-A", tool_name: "Bash", tool_input: { command: "ls" } });
+    const why = capped.out?.hookSpecificOutput?.permissionDecisionReason || "";
+    ok(capped.out?.hookSpecificOutput?.permissionDecision === "deny" && why.includes("50k billed tokens"), "past the cap, the agent's tool calls are refused", why.slice(0, 110));
+    const lift = agentCli("budget", "off");
+    ok(lift.status !== 0, "an agent can't lift the owner's cap", (lift.stderr || lift.stdout).trim().split("\n")[0]);
+    ok(cli("budget", "off").status === 0, "the owner lifts it");
+  }
 
   // HTTP dashboard state.
   const port = 17700 + Math.floor(Math.random() * 200);

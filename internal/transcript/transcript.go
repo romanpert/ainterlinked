@@ -7,7 +7,6 @@ package transcript
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -159,38 +158,17 @@ func samePath(a, b string) bool {
 }
 
 // claudeLine: Claude Code marks the entry that starts a turn with its
-// origin: "human" (typed by the user; "sdk" for a prompt passed on the
-// command line, also the user's) or "peer" (another session). Background
-// task notifications continue the turn that started the task: skipped.
+// origin (claudeTurn): the user's prompt, or anything else that started
+// one (another session, ainterlinked holding it open for peer mail).
 func claudeLine(line []byte) (int64, kind) {
-	if !bytes.Contains(line, []byte(`"origin"`)) && !bytes.Contains(line, []byte(`"turnOrigin"`)) {
+	cause, at, ok := claudeTurn(line)
+	switch {
+	case !ok:
 		return 0, other
+	case cause == CauseOwn:
+		return at, user
 	}
-	var e struct {
-		Timestamp  string `json:"timestamp"`
-		TurnOrigin string `json:"turnOrigin"`
-		Origin     *struct {
-			Kind string `json:"kind"`
-		} `json:"origin"`
-	}
-	if json.Unmarshal(line, &e) != nil {
-		return 0, other
-	}
-	how := e.TurnOrigin
-	if e.Origin != nil {
-		how = e.Origin.Kind
-	}
-	t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
-	if err != nil {
-		return 0, other
-	}
-	switch how {
-	case "human", "sdk":
-		return t.UnixMilli(), user
-	case "peer":
-		return t.UnixMilli(), peer
-	}
-	return 0, other
+	return at, peer
 }
 
 func safeID(s string) bool {
