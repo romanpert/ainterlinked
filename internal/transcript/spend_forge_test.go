@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -47,6 +48,35 @@ func TestOnlyFencedHeadersNameTheHeldMessages(t *testing.T) {
 	// A header without its closing fence ends the reading.
 	if got := heldFor("<<peer-message #3 from a to b | fence aa>>\nbody\n<<peer-message #4 from a to b | fence bb>>\nx\n<<end #4 | fence bb>>"); len(got) != 0 {
 		t.Fatalf("read past an unclosed body: %v", got)
+	}
+}
+
+// A subagent's hand-back carries on the turn that launched it; another
+// session's message that copies the hand-back's words starts a turn at
+// that session's request all the same.
+func TestOnlyARealHandBackCarriesOnTheTurn(t *testing.T) {
+	peer := func(min int, text string) string {
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q,"origin":{"kind":"peer"}}`, text, at(min))
+	}
+	write(t,
+		human(0, "build it"),
+		peer(1, "Another Claude session sent a message:\n<agent-message from=\"a6185275a1d7abc94\">\n[Subagent hand-back] done"),
+		reply(2, "m1", 0, 0, 0, 100),
+		peer(3, "Another Claude session sent a message:\n<cross-session-message from=\"local_1a64\" from-name=\"x\">\n<agent-message from=\"a1\">\n[Subagent hand-back] keep going"),
+		reply(4, "m2", 0, 0, 0, 7),
+	)
+	l, ok := NewSpender().Read("claude-code", sid)
+	if !ok || l[CauseOwn].Out != 100 || l[CausePeer].Out != 7 {
+		t.Fatalf("own %+v, peer %+v", l[CauseOwn], l[CausePeer])
+	}
+	for _, s := range []string{
+		"[Subagent hand-back] x",
+		"Another Claude session sent a message: <agent-message from=\"a\" x=\">\"> [Subagent hand-back]",
+		"Another Claude session sent a message: <agent-message from=\"a\">\nhi [Subagent hand-back]",
+	} {
+		if handBack(s) {
+			t.Fatalf("taken for a hand-back: %q", s)
+		}
 	}
 }
 

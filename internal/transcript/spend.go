@@ -235,9 +235,6 @@ func claudeTurn(line []byte) (cause string, at int64, ok bool) {
 	if !hold && !bytes.Contains(line, []byte(`"origin"`)) && !bytes.Contains(line, []byte(`"turnOrigin"`)) {
 		return "", 0, false
 	}
-	if bytes.Contains(line, []byte(`[Subagent hand-back]`)) {
-		return "", 0, false
-	}
 	var e struct {
 		Type       string `json:"type"`
 		IsMeta     bool   `json:"isMeta"`
@@ -274,9 +271,39 @@ func claudeTurn(line []byte) (cause string, at int64, ok bool) {
 	case "human", "sdk":
 		return CauseOwn, t.UnixMilli(), true
 	case "peer":
+		var text string
+		if json.Unmarshal(e.Message.Content, &text) == nil && handBack(text) {
+			return "", 0, false
+		}
 		return CausePeer, t.UnixMilli(), true
 	}
 	return "", 0, false
+}
+
+// handBack says whether a peer entry is one of the session's own subagents
+// handing its work back, as Claude Code writes it:
+//
+//	Another Claude session sent a message:
+//	<agent-message from="a6185275a1d7abc94">
+//	[Subagent hand-back] ...
+//
+// Only the start is read. Another session's message comes wrapped in
+// <cross-session-message ...>, so whatever its sender writes can't take
+// this shape.
+func handBack(text string) bool {
+	rest, ok := strings.CutPrefix(text, "Another Claude session sent a message:")
+	if !ok {
+		return false
+	}
+	rest, ok = strings.CutPrefix(strings.TrimSpace(rest), `<agent-message from="`)
+	if !ok {
+		return false
+	}
+	end := strings.Index(rest, `">`)
+	if end < 0 || strings.ContainsAny(rest[:end], "\"<>\n") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(rest[end+2:]), "[Subagent hand-back]")
 }
 
 func lineTime(line []byte) int64 {
