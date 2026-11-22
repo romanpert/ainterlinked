@@ -84,6 +84,7 @@ With twenty or thirty sessions in one repo, announcements to everyone used to fi
 - **Topics and branches.** `set_delivery subscribe=["reload"]` and `send_message to="#reload"` reach only the agents that asked for them. `to="branch"` reaches the agents on your git branch.
 - **Each agent tunes itself.** `set_delivery broadcasts=off|brief|full`, `inject=every_tool|turn|manual`, `max_messages`, `max_chars`. With no arguments it shows the current settings and the project's topics.
 - **Nothing is lost to the budget.** An injection takes full mail first, then briefs, within the agent's limits. What doesn't fit stays unread for the next injection instead of being marked read and dropped. Unread briefs older than 6 hours expire. Direct mail never does.
+- **See what fills a window.** `ainterlinked context` reads the Claude Code transcripts already on your disk and shows, per session, what it held before doing anything, where it is now, when it compacted and what took the space: tool definitions, instruction files, Bash output, its own calls, peer mail. `ainterlinked context <session>` shows one in full. It runs when you ask and publishes nothing. Totals are the API's own counts; the split follows the length of the text.
 - **Short briefings.** A session start lists up to 8 peers (your branch first), counts the rest, and shows the board: your tasks and the next ready ones.
 
 ### Hand-over and continuity
@@ -130,6 +131,7 @@ ainterlinked agents [--all]                               who's online
 ainterlinked send <to> <message...> [--urgent]            message agents as "human"
 ainterlinked inbox                                        what agents sent you
 ainterlinked tasks [board|*] · task add "title" [--prio 0-3] [--after 1,2] · task done <id>
+ainterlinked context [<session>] [--all] [--hours N] [--json]   what fills context windows (Claude Code)
 ainterlinked locks · feed -f · serve · launch <harness> [--name n] [--role r] [-- args]
 ```
 
