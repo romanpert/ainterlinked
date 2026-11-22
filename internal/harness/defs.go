@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/romanpert/interlinked/internal/jsonc"
+	"github.com/romanpert/ainterlinked/internal/jsonc"
 )
 
 // All returns every supported harness, in display order.

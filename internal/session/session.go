@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/proc"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
 // Context describes the current harness session.

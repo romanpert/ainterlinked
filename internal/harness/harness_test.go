@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/romanpert/interlinked/internal/jsonc"
+	"github.com/romanpert/ainterlinked/internal/jsonc"
 )
 
 var fixtures = map[string]string{

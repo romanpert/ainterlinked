@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/romanpert/interlinked/internal/cli"
+	"github.com/romanpert/ainterlinked/internal/cli"
 )
 
 func main() { os.Exit(cli.Main(os.Args[1:])) }

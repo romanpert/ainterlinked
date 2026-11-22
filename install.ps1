@@ -1,12 +1,12 @@
 # interlinked installer for Windows (PowerShell 5.1+).
-#   irm https://raw.githubusercontent.com/romanpert/interlinked/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/romanpert/ainterlinked/main/install.ps1 | iex
 # Downloads the release binary to %LOCALAPPDATA%\Programs\interlinked, verifies
 # its checksum, adds it to your user PATH, then wires every detected AI harness.
 # Set $env:INTERLINKED_NO_WIRE = '1' to only install the binary.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repo = 'romanpert/interlinked'
+$repo = 'romanpert/ainterlinked'
 $version = if ($env:INTERLINKED_VERSION) { $env:INTERLINKED_VERSION } else { 'latest' }
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $asset = "interlinked-windows-$arch.exe"

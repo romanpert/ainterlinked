@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/romanpert/interlinked/internal/jsonc"
+	"github.com/romanpert/ainterlinked/internal/jsonc"
 )
 
 // Env is what an installer needs to know about the machine.

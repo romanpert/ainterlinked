@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 type env struct {

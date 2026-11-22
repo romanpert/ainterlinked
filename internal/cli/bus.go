@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/harness"
-	"github.com/romanpert/interlinked/internal/hub"
-	"github.com/romanpert/interlinked/internal/render"
-	"github.com/romanpert/interlinked/internal/web"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/harness"
+	"github.com/romanpert/ainterlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/render"
+	"github.com/romanpert/ainterlinked/internal/web"
 )
 
 func openHub() (hub.Client, config.Config, error) {

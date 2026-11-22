@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/hub"
-	"github.com/romanpert/interlinked/internal/render"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/render"
 )
 
 type prop = map[string]any

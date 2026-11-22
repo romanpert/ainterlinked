@@ -22,7 +22,7 @@ import zipfile
 DIST_NAME = "ainterlinked"  # PyPI name ("interlinked" is taken by another project)
 PKG = "ainterlinked"  # import package (python -m ainterlinked)
 GO_MAIN = "./cmd/interlinked"
-LDFLAG_VERSION = "github.com/romanpert/interlinked/internal/cli.Version"
+LDFLAG_VERSION = "github.com/romanpert/ainterlinked/internal/cli.Version"
 SUMMARY = "Real-time bus for AI coding agents across harnesses: Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode and more"
 
 # goos, goarch -> wheel platform tags (Go binaries are static: one wheel covers glibc and musl).
@@ -58,9 +58,9 @@ def metadata(version: str) -> str:
         f"Name: {DIST_NAME}",
         f"Version: {version}",
         f"Summary: {SUMMARY}",
-        "Home-page: https://github.com/romanpert/interlinked",
-        "Project-URL: Source, https://github.com/romanpert/interlinked",
-        "Project-URL: Issues, https://github.com/romanpert/interlinked/issues",
+        "Home-page: https://github.com/romanpert/ainterlinked",
+        "Project-URL: Source, https://github.com/romanpert/ainterlinked",
+        "Project-URL: Issues, https://github.com/romanpert/ainterlinked/issues",
         "License: Apache-2.0",
         "Keywords: ai,agents,mcp,claude-code,codex,copilot,cursor,gemini,opencode,multi-agent",
         "Classifier: Development Status :: 4 - Beta",

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 func newServer(t *testing.T, token string) (*Server, *hub.Local) {

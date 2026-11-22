@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/romanpert/interlinked/internal/jsonc"
+	"github.com/romanpert/ainterlinked/internal/jsonc"
 )
 
 // Tx collects config-file changes and applies them atomically per file, with

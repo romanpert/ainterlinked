@@ -1,12 +1,12 @@
 #!/bin/sh
 # interlinked installer for macOS and Linux.
-#   curl -fsSL https://raw.githubusercontent.com/romanpert/interlinked/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/romanpert/ainterlinked/main/install.sh | sh
 # Downloads the release binary to ~/.local/bin (override with INTERLINKED_BIN_DIR),
 # verifies its checksum, then wires every detected AI harness (`interlinked install`).
 # Pass --no-wire to only install the binary; other arguments go to `interlinked install`.
 set -eu
 
-REPO="romanpert/interlinked"
+REPO="romanpert/ainterlinked"
 VERSION="${INTERLINKED_VERSION:-latest}"
 BIN_DIR="${INTERLINKED_BIN_DIR:-$HOME/.local/bin}"
 

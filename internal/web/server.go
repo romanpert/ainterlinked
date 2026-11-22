@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 //go:embed dashboard.html

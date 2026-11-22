@@ -15,12 +15,12 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/harness"
-	"github.com/romanpert/interlinked/internal/hooks"
-	"github.com/romanpert/interlinked/internal/hub"
-	"github.com/romanpert/interlinked/internal/mcp"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/harness"
+	"github.com/romanpert/ainterlinked/internal/hooks"
+	"github.com/romanpert/ainterlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/mcp"
 )
 
 // Version is stamped at build time (-ldflags "-X .../cli.Version=x.y.z").
@@ -54,7 +54,7 @@ Plumbing (called by harnesses)
 
   version, config [--path]
 
-Docs: https://github.com/romanpert/interlinked
+Docs: https://github.com/romanpert/ainterlinked
 `
 
 // Main runs the CLI and returns the exit code.

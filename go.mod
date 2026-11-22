@@ -1,4 +1,4 @@
-module github.com/romanpert/interlinked
+module github.com/romanpert/ainterlinked
 
 go 1.26.2
 

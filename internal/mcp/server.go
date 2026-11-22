@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/core"
-	"github.com/romanpert/interlinked/internal/hooks"
-	"github.com/romanpert/interlinked/internal/hub"
-	"github.com/romanpert/interlinked/internal/render"
-	"github.com/romanpert/interlinked/internal/session"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/hooks"
+	"github.com/romanpert/ainterlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/render"
+	"github.com/romanpert/ainterlinked/internal/session"
 )
 
 // Version is set by the CLI.

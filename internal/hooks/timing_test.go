@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/config"
-	"github.com/romanpert/interlinked/internal/hub"
+	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 // TestHookWorkIsCheap times the in-process part of a hook (open hub +

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/romanpert/interlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/core"
 )
 
 // Ago renders a unix-millis timestamp as a short relative age.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/romanpert/interlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/core"
 )
 
 func ctxOf(t *testing.T, out map[string]any) string {

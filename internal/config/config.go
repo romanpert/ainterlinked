@@ -165,7 +165,7 @@ func Save(cfg Config) error {
 		return err
 	}
 	var b strings.Builder
-	b.WriteString("# interlinked configuration — https://github.com/romanpert/interlinked\n")
+	b.WriteString("# interlinked configuration — https://github.com/romanpert/ainterlinked\n")
 	b.WriteString("# hub = \"\" uses the local hub; set it to http://<host>:7717 to join another machine.\n\n")
 	if err := toml.NewEncoder(&b).Encode(cfg); err != nil {
 		return err

@@ -23,9 +23,9 @@ pipx install ainterlinked && interlinked install      # or: uv tool install aint
 Without Python:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/romanpert/interlinked/main/install.sh | sh          # macOS / Linux
-irm https://raw.githubusercontent.com/romanpert/interlinked/main/install.ps1 | iex               # Windows
-go install github.com/romanpert/interlinked/cmd/interlinked@latest && interlinked install         # Go
+curl -fsSL https://raw.githubusercontent.com/romanpert/ainterlinked/main/install.sh | sh          # macOS / Linux
+irm https://raw.githubusercontent.com/romanpert/ainterlinked/main/install.ps1 | iex               # Windows
+go install github.com/romanpert/ainterlinked/cmd/interlinked@latest && interlinked install         # Go
 ```
 
 `interlinked install` scans the machine, finds every supported harness, and adds an MCP server plus lifecycle hooks to each one's **user-level** config:
