@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/romanpert/ainterlinked/internal/config"
@@ -10,15 +11,23 @@ import (
 	"github.com/romanpert/ainterlinked/internal/machine"
 )
 
-// sampleEvery is core.SampleEvery; tests shorten it.
-var sampleEvery = core.SampleEvery
+// sampleOverride, when set, replaces core.SampleEvery (tests shorten it).
+// Atomic: servers started by other tests may still be running their loop.
+var sampleOverride atomic.Int64
+
+func sampleEvery() time.Duration {
+	if d := sampleOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return core.SampleEvery
+}
 
 // machineLoop keeps the hub's machine row current. Every session runs it,
 // but only the one holding the sampler's lease reads counters; the others
 // read one row every SampleEvery and take over when the lease lapses (the
 // sampling session ended).
 func (s *Server) machineLoop() {
-	t := time.NewTicker(sampleEvery)
+	t := time.NewTicker(sampleEvery())
 	defer t.Stop()
 	var smp *machine.Sampler // nil while another session samples
 	for {

@@ -14,9 +14,8 @@ import (
 // Two sessions are open; exactly one samples the machine, and list_agents
 // shows the load once a sample exists.
 func TestOneSessionSamplesTheMachine(t *testing.T) {
-	old := sampleEvery
-	sampleEvery = 50 * time.Millisecond
-	defer func() { sampleEvery = old }()
+	sampleOverride.Store(int64(50 * time.Millisecond))
+	defer sampleOverride.Store(0)
 	home := t.TempDir()
 	t.Setenv("AINTERLINKED_HOME", home)
 	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Minute})
@@ -45,7 +44,7 @@ func TestOneSessionSamplesTheMachine(t *testing.T) {
 		t.Fatalf("the sampler measures CPU from its second read: %+v", m)
 	}
 	first := m.Sampler
-	time.Sleep(10 * sampleEvery)
+	time.Sleep(10 * sampleEvery())
 	if m, _ = st.Machine(ctx); m.Sampler != first {
 		t.Fatalf("the lease holder keeps sampling: was %s, now %s", first, m.Sampler)
 	}
