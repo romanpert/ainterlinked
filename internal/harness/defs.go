@@ -404,7 +404,7 @@ func opencode() *Harness {
 				return jsonc.Set(old, []string{"mcp", "interlinked"}, map[string]any{
 					"type": "local", "command": append([]string{e.Bin}, mcpArgs("opencode")...), "enabled": true})
 			})
-			t.Write(plugin(e), []byte(strings.ReplaceAll(opencodePlugin, "__INTERLINKED_BIN__", filepath.ToSlash(e.Bin))))
+			t.Write(plugin(e), []byte(strings.ReplaceAll(opencodePlugin, "__INTERLINKED_BIN__", e.binSlash())))
 		},
 		uninstall: func(e *Env, t *Tx) {
 			jsonServerRemove(t, cfg(e), []string{"mcp"})

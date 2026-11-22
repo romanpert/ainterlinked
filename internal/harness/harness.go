@@ -99,10 +99,20 @@ func evidence(e *Env, bins []string, paths ...string) []string {
 	return out
 }
 
-// cmdPath renders the binary for a shell command line: forward slashes work
-// in sh, bash, cmd and PowerShell alike; quoting is only added when needed.
+// binSlash is the binary path with forward slashes on Windows (they work in
+// sh, bash, cmd, PowerShell and JS strings alike). It follows e.GOOS rather
+// than the host, so a simulated Windows Env renders the same everywhere.
+func (e *Env) binSlash() string {
+	if e.GOOS == "windows" {
+		return strings.ReplaceAll(e.Bin, `\`, "/")
+	}
+	return e.Bin
+}
+
+// cmdPath renders the binary for a shell command line; quoting is only added
+// when needed.
 func (e *Env) cmdPath(powershell bool) string {
-	p := filepath.ToSlash(e.Bin)
+	p := e.binSlash()
 	if !strings.ContainsAny(p, " \t'\"&()") {
 		return p
 	}

@@ -3,6 +3,7 @@ package proc
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"testing"
 )
 
@@ -60,6 +61,9 @@ func TestAliveSetSeesItself(t *testing.T) {
 
 // The per-process walk (fast path) must agree with the full snapshot.
 func TestLookupWalkMatchesSnapshot(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("no per-process lookup on " + runtime.GOOS + ": Anchor uses the snapshot")
+	}
 	table, err := snapshot()
 	if err != nil {
 		t.Skip("no process table here:", err)

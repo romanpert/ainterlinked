@@ -246,7 +246,7 @@ func TestCRLFStaysCRLF(t *testing.T) {
 }
 
 func TestCommandQuoting(t *testing.T) {
-	e := &Env{Bin: `C:\Program Files\il\interlinked.exe`}
+	e := &Env{Bin: `C:\Program Files\il\interlinked.exe`, GOOS: "windows"}
 	if got := e.hookCmd("cursor", "stop", true); got != "& 'C:/Program Files/il/interlinked.exe' hook cursor stop" {
 		t.Errorf("powershell: %s", got)
 	}
