@@ -298,7 +298,7 @@ func (s *Server) handle(ctx context.Context, m rpcMsg) {
 	case "ping":
 		s.reply(m.ID, map[string]any{})
 	case "tools/list":
-		s.reply(m.ID, map[string]any{"tools": toolDefs()})
+		s.reply(m.ID, map[string]any{"tools": toolDefs(s.cfg.Limits)})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -471,7 +471,7 @@ func (s *Server) pushLoop() {
 		case <-t.C:
 		}
 		id := s.agentID()
-		if id == "" || time.Since(last) < 15*time.Second || hooks.Holds(id) >= hooks.MaxHolds {
+		if id == "" || time.Since(last) < 15*time.Second || s.cfg.Limits.HeldOut(hooks.Holds(id)) {
 			continue
 		}
 		for len(hour) > 0 && time.Since(hour[0]) > time.Hour {

@@ -124,7 +124,7 @@ func TestReservationsAreLeasesKeptByUse(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	for _, g := range res.Granted {
-		if g.Terms == "" || (UseWindow(g.Pattern) > 0 && !strings.Contains(g.Terms, UseWindow(g.Pattern).String())) {
+		if g.Terms == "" || (DefaultLimits().UseWindow(g.Pattern) > 0 && !strings.Contains(g.Terms, DefaultLimits().UseWindow(g.Pattern).String())) {
 			t.Fatalf("the terms are stated up front: %+v", g)
 		}
 	}

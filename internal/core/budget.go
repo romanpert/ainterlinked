@@ -13,7 +13,7 @@ import (
 // them that refills with time: enough to announce what everyone must know (a
 // reload, a branch switch, a release), not enough to chat to the whole bus.
 // Mail to a name and #topic posts (their subscribers chose them) are never
-// limited; the human isn't either.
+// limited; the human isn't either. Starting values: see Limits.
 const (
 	BroadcastBurst  = 6                // broadcasts a sender may send in a row
 	BroadcastRefill = 10 * time.Minute // one more becomes available this often
@@ -50,16 +50,20 @@ func isBroadcast(to string, sender Agent) bool {
 // was already full); a broadcast is allowed while that stays within
 // BroadcastBurst refills of now. That is a token bucket of BroadcastBurst
 // tokens refilling one per BroadcastRefill, without a background refill.
-func spendBroadcast(tx *sql.Tx, now int64, sender Agent) error {
+func (l Limits) spendBroadcast(tx *sql.Tx, now int64, sender Agent) error {
+	if !l.Broadcasts() {
+		return nil
+	}
 	var fullAt int64
 	err := tx.QueryRow(`SELECT full_at FROM broadcast_budget WHERE agent_id=?`, sender.ID).Scan(&fullAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	refill := BroadcastRefill.Milliseconds()
+	refill := minutes(l.BroadcastRefillMinutes).Milliseconds()
+	burst := int64(l.BroadcastBurst)
 	next := max(fullAt, now) + refill
-	if next-now > BroadcastBurst*refill {
-		return broadcastRefused(now, next-BroadcastBurst*refill)
+	if next-now > burst*refill {
+		return l.broadcastRefused(now, next-burst*refill)
 	}
 	_, err = tx.Exec(`INSERT INTO broadcast_budget(agent_id,full_at) VALUES(?,?)
 		ON CONFLICT(agent_id) DO UPDATE SET full_at=excluded.full_at`, sender.ID, next)
@@ -68,8 +72,8 @@ func spendBroadcast(tx *sql.Tx, now int64, sender Agent) error {
 
 // broadcastRefused states the rule, when the sender may broadcast again and
 // what to do meanwhile.
-func broadcastRefused(now, again int64) error {
+func (l Limits) broadcastRefused(now, again int64) error {
 	wait := time.Duration(again-now) * time.Millisecond
 	return fmt.Errorf("broadcast refused: the recipient's attention is its own, so each agent may send up to %d broadcasts in a row ('*', 'project', 'project:<name>', 'harness:<name>') and gets one more every %d minutes. You can broadcast again in %s (at %s). Meanwhile name the agents who need this (list_agents shows who works on what) or post to a #topic, whose subscribers chose to hear it",
-		BroadcastBurst, int(BroadcastRefill.Minutes()), wait.Round(time.Second), time.UnixMilli(again).Format("15:04"))
+		l.BroadcastBurst, l.BroadcastRefillMinutes, wait.Round(time.Second), time.UnixMilli(again).Format("15:04"))
 }

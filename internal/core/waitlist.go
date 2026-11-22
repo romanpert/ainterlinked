@@ -25,7 +25,7 @@ type Waiter struct {
 	ExpiresAt   int64    `json:"expires_at"`
 }
 
-// WaitTTL is how long a queue place lasts.
+// WaitTTL is how long a queue place lasts, unless the user set Limits.QueueMinutes.
 const WaitTTL = 2 * time.Hour
 
 // idleGrantTTL caps a reservation granted from the queue to an agent that
@@ -35,8 +35,12 @@ const idleGrantTTL = 10 * time.Minute
 // enqueue adds (or refreshes) a's place for pattern and tells the holders
 // once. It runs inside the Reserve transaction.
 func (s *Store) enqueue(tx *sql.Tx, now int64, a Agent, pattern, reason string, taskID int64, ttl time.Duration, holders []Lock) (Waiter, error) {
+	last := minutes(s.lim().QueueMinutes)
+	if last == 0 {
+		last = maxLimit * time.Minute // while the agent is online: the queue drops the rest
+	}
 	w := Waiter{ProjectPath: a.ProjectPath, Pattern: pattern, AgentID: a.ID, Agent: a.Name, Reason: reason, TaskID: taskID,
-		CreatedAt: now, ExpiresAt: now + WaitTTL.Milliseconds()}
+		CreatedAt: now, ExpiresAt: now + last.Milliseconds()}
 	err := tx.QueryRow(`SELECT id, created_at FROM waiters WHERE project_path=? AND pattern=? AND agent_id=?`, a.ProjectPath, pattern, a.ID).Scan(&w.ID, &w.CreatedAt)
 	fresh := err == sql.ErrNoRows
 	switch {
@@ -202,8 +206,8 @@ func (s *Store) promote(tx *sql.Tx) error {
 			continue
 		}
 		ttl := q.ttl
-		if (q.state == "idle" || q.state == "done") && ttl > idleGrantTTL.Milliseconds() {
-			ttl = idleGrantTTL.Milliseconds()
+		if most := minutes(s.lim().IdleGrantMinutes).Milliseconds(); most > 0 && (q.state == "idle" || q.state == "done") && ttl > most {
+			ttl = most
 		}
 		_, _ = tx.Exec(`DELETE FROM locks WHERE agent_id=? AND project_path=? AND pattern=?`, q.AgentID, q.ProjectPath, q.Pattern)
 		res, err := tx.Exec(`INSERT INTO locks(project_path,pattern,agent_id,agent_name,reason,task_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`,

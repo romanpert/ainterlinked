@@ -29,7 +29,8 @@ const (
 // repo don't fill each other's context with announcements.
 const DefaultBroadcasts = ModeBrief
 
-// BriefTTL is how long an unread brief stays worth showing. An agent that
+// BriefTTL is how long an unread brief stays worth showing, unless the user
+// set Limits.BriefHours. An agent that
 // comes back after hours isn't shown stale announcements; read_inbox all=true
 // still has them.
 const BriefTTL = 6 * time.Hour

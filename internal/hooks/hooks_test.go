@@ -134,6 +134,26 @@ func TestClaudeSessionFlow(t *testing.T) {
 	}
 }
 
+// How often peer mail may keep a session going is the user's to set; 0 = no cap.
+func TestTheStopHoldCapIsTheUsers(t *testing.T) {
+	for most, want := range map[int]int{2: 2, 0: 10} {
+		e := setup(t)
+		e.cfg.Limits.MaxHolds = most
+		e.as("1", "claude-code", "SessionStart", nil)
+		e.as("2", "codex", "SessionStart", nil)
+		held := 0
+		for i := 0; i < 10; i++ {
+			e.send("2", "1", "chatter")
+			if _, out := e.as("1", "claude-code", "Stop", nil); out != nil {
+				held++
+			}
+		}
+		if held != want {
+			t.Fatalf("max_holds %d: held %d times, want %d", most, held, want)
+		}
+	}
+}
+
 func TestStopHoldsAreCapped(t *testing.T) {
 	e := setup(t)
 	e.as("1", "claude-code", "SessionStart", nil)
@@ -145,8 +165,8 @@ func TestStopHoldsAreCapped(t *testing.T) {
 			held++
 		}
 	}
-	if held != MaxHolds {
-		t.Fatalf("held %d times, want cap %d", held, MaxHolds)
+	if held != 6 {
+		t.Fatalf("held %d times, want cap 6", held)
 	}
 	e.as("1", "claude-code", "UserPromptSubmit", map[string]any{"prompt": "next thing"})
 	e.send("2", "1", "after user prompt")

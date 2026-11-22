@@ -10,6 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/env"
 )
 
@@ -25,6 +26,7 @@ type Config struct {
 	Delivery  Delivery              `toml:"delivery"`
 	Presence  Presence              `toml:"presence"`
 	Locks     Locks                 `toml:"locks"`
+	Limits    core.Limits           `toml:"limits"`
 	Covenant  Covenant              `toml:"covenant"`
 	Server    Server                `toml:"server"`
 	Harnesses map[string]HarnessCfg `toml:"harnesses"`
@@ -89,6 +91,7 @@ func Default() Config {
 		},
 		Presence:  Presence{HeartbeatSeconds: 10, StaleSeconds: 45, TrackActivity: true},
 		Locks:     Locks{Enforce: "deny", TTLMinutes: 30},
+		Limits:    core.DefaultLimits(),
 		Covenant:  Covenant{Show: true},
 		Server:    Server{Listen: "127.0.0.1:7717"},
 		Harnesses: map[string]HarnessCfg{},
@@ -162,6 +165,9 @@ func LoadFile() (Config, error) {
 		return cfg, err
 	}
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return cfg, fmt.Errorf("config %s: %w", Path(), err)
+	}
+	if err := cfg.Limits.Check(); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
 	var old struct {

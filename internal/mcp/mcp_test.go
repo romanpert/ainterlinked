@@ -233,7 +233,7 @@ func TestToolNamesMatchHarnessAllowList(t *testing.T) {
 	for _, n := range harness.ToolNames {
 		allowed[n] = true
 	}
-	for _, d := range toolDefs() {
+	for _, d := range toolDefs(core.DefaultLimits()) {
 		if !allowed[d.Name] {
 			t.Errorf("tool %q is missing from harness.ToolNames", d.Name)
 		}

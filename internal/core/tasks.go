@@ -42,10 +42,17 @@ type Task struct {
 //
 // A holder offline for longer than AbandonAfter is no longer using the task:
 // it goes back to todo, with its body and result kept, and the holder is told
-// when it comes back. Claiming states these terms up front.
+// when it comes back. Claiming states these terms up front. The user can
+// change them (Limits).
 const AbandonAfter = 30 * time.Minute
 
-var claimTerms = fmt.Sprintf("yours while you use it: only you, its creator or the human change it; if you are offline for over %s it goes back to todo (notes kept)", AbandonAfter)
+func (l Limits) claimTerms() string {
+	terms := "yours while you use it: only you, its creator or the human change it"
+	if l.AbandonTaskMinutes > 0 {
+		terms += fmt.Sprintf("; if you are offline for over %s it goes back to todo (notes kept)", minutes(l.AbandonTaskMinutes))
+	}
+	return terms
+}
 
 func isHuman(a Agent) bool { return a.Harness == "human" }
 
@@ -481,7 +488,7 @@ func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error)
 		return err
 	})
 	if err == nil {
-		out.Terms = claimTerms
+		out.Terms = s.lim().claimTerms()
 	}
 	return out, err
 }
@@ -543,9 +550,13 @@ func (s *Store) abandon(tx *sql.Tx) error {
 	if err := s.reap(tx); err != nil { // offline means what it means everywhere else
 		return err
 	}
+	after := minutes(s.lim().AbandonTaskMinutes)
+	if after == 0 {
+		return nil
+	}
 	now := s.ms()
 	rows, err := tx.Query(`SELECT t.id, t.title, t.assignee_id, t.assignee FROM tasks t LEFT JOIN agents a ON a.id=t.assignee_id
-		WHERE t.status='doing' AND t.assignee_id<>'' AND (a.id IS NULL OR (a.online=0 AND a.last_seen<?))`, now-AbandonAfter.Milliseconds())
+		WHERE t.status='doing' AND t.assignee_id<>'' AND (a.id IS NULL OR (a.online=0 AND a.last_seen<?))`, now-after.Milliseconds())
 	if err != nil {
 		return err
 	}
@@ -573,8 +584,8 @@ func (s *Store) abandon(tx *sql.Tx) error {
 		}
 		who := Agent{ID: h.aid, Name: h.aname}
 		notice(tx, now, who, fmt.Sprintf("#%d back to todo", h.id),
-			fmt.Sprintf("Task #%d %q went back to todo: you were offline for over %s. Its notes and result are kept; claim it again if it is still free.", h.id, h.title, AbandonAfter))
-		event(tx, now, &who, "task", fmt.Sprintf("#%d back to todo: %s offline for over %s", h.id, h.aname, AbandonAfter))
+			fmt.Sprintf("Task #%d %q went back to todo: you were offline for over %s. Its notes and result are kept; claim it again if it is still free.", h.id, h.title, after))
+		event(tx, now, &who, "task", fmt.Sprintf("#%d back to todo: %s offline for over %s", h.id, h.aname, after))
 	}
 	return nil
 }

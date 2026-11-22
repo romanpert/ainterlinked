@@ -53,11 +53,7 @@ func RunDaemon(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	defer lock.Close()
-	st, err := core.Open(config.DBPath(), core.Options{
-		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
-		Machine: cfg.Machine,
-		Alive:   proc.AliveSet,
-	})
+	st, err := core.Open(config.DBPath(), storeOptions(cfg, 0))
 	if err != nil {
 		return err
 	}
@@ -87,6 +83,7 @@ func RunDaemon(ctx context.Context, cfg config.Config) error {
 func (s *Server) watch(ctx context.Context, stop func()) {
 	exe, _ := os.Executable()
 	stamp := fileStamp(exe)
+	terms := "" // of the config file the limits come from
 	idleSince := time.Now()
 	exclusive := false
 	pruned := time.Time{}
@@ -106,6 +103,7 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 			stop()
 			return
 		}
+		terms = s.followLimits(terms)
 		if s.Busy() {
 			idleSince = time.Now()
 		} else if time.Since(idleSince) > idleExit {
@@ -122,6 +120,19 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 			}
 		}
 	}
+}
+
+// followLimits applies the user's [limits] when config.toml has changed since
+// stamp. A file that can't be read (mid-edit, a typo) leaves them as they are.
+func (s *Server) followLimits(stamp string) string {
+	now := fileStamp(config.Path())
+	if now == stamp {
+		return stamp
+	}
+	if cfg, err := config.LoadFile(); err == nil {
+		s.Store.SetLimits(cfg.Limits)
+	}
+	return now
 }
 
 func fileStamp(path string) string {
@@ -197,14 +208,19 @@ func spawn() error {
 	return cmd.Process.Release()
 }
 
-// openLocal is the in-process hub (no hub process).
-func openLocal(cfg config.Config, busy time.Duration) (Client, error) {
-	st, err := core.Open(config.DBPath(), core.Options{
+func storeOptions(cfg config.Config, busy time.Duration) core.Options {
+	return core.Options{
 		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
 		Machine: cfg.Machine,
 		Alive:   proc.AliveSet,
 		Busy:    busy,
-	})
+		Limits:  &cfg.Limits,
+	}
+}
+
+// openLocal is the in-process hub (no hub process).
+func openLocal(cfg config.Config, busy time.Duration) (Client, error) {
+	st, err := core.Open(config.DBPath(), storeOptions(cfg, busy))
 	if err != nil {
 		return nil, err
 	}

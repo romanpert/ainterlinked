@@ -417,7 +417,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 
 	case Stop:
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "idle", Quiet: true}, nil)
-		if in.LoopCount >= 5 || Holds(me.ID) >= MaxHolds || !canSay(harness, event, kind, Result{Block: "x"}) {
+		if in.LoopCount >= 5 || cfg.Limits.HeldOut(Holds(me.ID)) || !canSay(harness, event, kind, Result{Block: "x"}) {
 			return Result{}, nil
 		}
 		p := prefs()
@@ -460,13 +460,10 @@ func touchFile(ctx context.Context, c hub.Client, agent, f string) (*core.Lock, 
 	return l, err
 }
 
-// MaxHolds caps automatic continuations (stop-holds, OpenCode wake-ups,
-// Claude channel pushes) between two real user prompts.
-const MaxHolds = 6
-
-// Holds counts automatic continuations for an agent since the user last
-// prompted, so two chatty agents can't keep each other alive (and spending
-// tokens) forever. Kept in a tiny file per agent.
+// Holds counts automatic continuations (stop-holds, OpenCode wake-ups, Claude
+// channel pushes) for an agent since the user last prompted, so two chatty
+// agents can't keep each other alive (and spending tokens) past the user's
+// Limits.MaxHolds. Kept in a tiny file per agent.
 func Holds(id string) int {
 	b, err := os.ReadFile(holdsPath(id))
 	if err != nil {

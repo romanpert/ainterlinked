@@ -603,7 +603,7 @@ func (s *Store) List(ctx context.Context, f AgentFilter) ([]Agent, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	stale := s.ms() - BriefTTL.Milliseconds()
+	stale := s.briefCut()
 	for i := range out {
 		_ = s.db.QueryRowContext(ctx, `SELECT count(*) FROM receipts r JOIN messages m ON m.id=r.message_id
 			WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, out[i].ID, stale).Scan(&out[i].Unread)

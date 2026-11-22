@@ -42,7 +42,18 @@ type tool struct {
 
 func ro() prop { return prop{"readOnlyHint": true} }
 
-func toolDefs() []tool {
+func toolDefs(l core.Limits) []tool {
+	budget, lapse := "", ""
+	if l.Broadcasts() {
+		budget = fmt.Sprintf(" Broadcasts ('*', 'project', 'project:<name>', 'harness:<name>') come from a budget of %d that refills one every %d minutes; names, 'branch' and '#topic' are never limited.", l.BroadcastBurst, l.BroadcastRefillMinutes)
+	}
+	if l.IdleLapseMinutes > 0 {
+		lapse = fmt.Sprintf(" Your reservations lapse %d min after your turn ends.", l.IdleLapseMinutes)
+	}
+	auto := ""
+	if l.AutoReserveMinutes > 0 {
+		auto = " With edit hooks you rarely need it: editing a file reserves it for you automatically (renewed by each edit)."
+	}
 	return []tool{
 		{"whoami", "Your identity on the ainterlinked bus, unread count and who else is online in your project.", obj(prop{}), ro()},
 		{"list_agents", "List AI agents (any harness) online now: name, harness, project, branch, state, current activity, and what each has done lately (facts, not a score).",
@@ -52,7 +63,7 @@ func toolDefs() []tool {
 				"role": str("Your role in the team, e.g. reviewer"), "name": str("Rename yourself, ideally after your task (old names keep reaching you)"),
 				"continue_as":        str("Continue an offline agent of this checkout (after a restart or a switch of IDE/provider/account): take its name, unread mail, threads, tasks and reservations"),
 				"share_load_seconds": num("Only if the user asks: publish this machine's CPU, memory and disk every N seconds while this session is open; 0 stops")}), nil},
-		{"send_message", fmt.Sprintf("Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as each recipient chose (one-line briefs by default): put the point in the subject/first line. Broadcasts ('*', 'project', 'project:<name>', 'harness:<name>') come from a budget of %d that refills one every %d minutes; names, 'branch' and '#topic' are never limited. Omit to when replying.", core.BroadcastBurst, int(core.BroadcastRefill.Minutes())),
+		{"send_message", "Message other agents. to: a name (full delivery), 'branch' or 'branch:<name>', '#topic' (its subscribers), 'project', 'project:<name>', 'harness:<name>', '*', or a comma list. Group messages arrive as each recipient chose (one-line briefs by default): put the point in the subject/first line." + budget + " Omit to when replying.",
 			obj(prop{"to": str("Recipient(s)"), "body": str("Message text (max 16 KB; reference files by path)"), "subject": str("Optional short subject (shown in briefs)"),
 				"reply_to": num("The #number of the message you're answering (keeps the thread)"), "urgent": boo("Read first; it still follows each recipient's delivery choice (only the human's urgent mail overrides it)")}, "body"), nil},
 		{"read_inbox", "Read your unread messages (marks them read). all=true shows recent history; threads=true lists your recent conversations to pick one up again.",
@@ -81,7 +92,7 @@ func toolDefs() []tool {
 		{"update_task", "Change a task: status (todo, doing, blocked, review, done, cancelled), result, title, body, priority or assignee ('me', a name, or '' to unassign). A task someone holds changes only by its holder, its creator or the human. The creator is told when it's done or blocked.",
 			obj(prop{"id": num("Task id"), "status": prop{"type": "string", "enum": core.TaskStatuses}, "result": str("Outcome / notes (when done or blocked)"),
 				"title": str("New title"), "body": str("New body"), "priority": num("0-3"), "assignee": str("Agent name, 'me' or ''")}, "id"), nil},
-		{"reserve_files", "Claim files/folders ahead of editing them, e.g. for a refactor (globs ok: src/api/**, *.md; trailing / = folder), or queue for held ones with wait=true. With edit hooks you rarely need it: editing a file reserves it for you automatically (renewed by each edit), and your reservations lapse 15 min after your turn ends. Keep it narrow; release when done.",
+		{"reserve_files", "Claim files/folders ahead of editing them, e.g. for a refactor (globs ok: src/api/**, *.md; trailing / = folder), or queue for held ones with wait=true." + auto + lapse + " Keep it narrow; release when done.",
 			obj(prop{"paths": strs("Paths relative to the project root"), "reason": str("Why (defaults to the task title)"), "ttl_minutes": num("Default 30"),
 				"wait": boo("If held, queue: it becomes yours, and you're told, when the holder lets go"),
 				"task": num("Board task this is for: claims it if free; the reservation ends when it's done")}, "paths"), nil},

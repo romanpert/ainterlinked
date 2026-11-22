@@ -109,7 +109,7 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.ms()
 		if isBroadcast(r.To, sender) && !isHuman(sender) {
-			if err := spendBroadcast(tx, now, sender); err != nil {
+			if err := s.lim().spendBroadcast(tx, now, sender); err != nil {
 				return err
 			}
 		}
@@ -374,7 +374,7 @@ func (s *Store) Inbox(ctx context.Context, r InboxReq) ([]Message, error) {
 	if r.Limit <= 0 || r.Limit > 200 {
 		r.Limit = 20
 	}
-	staleCut := s.ms() - BriefTTL.Milliseconds()
+	staleCut := s.briefCut()
 	query := `SELECT m.` + strings.ReplaceAll(msgCols, ",", ",m.") + `,r.mode FROM receipts r JOIN messages m ON m.id=r.message_id WHERE r.agent_id=?`
 	args := []any{r.Agent}
 	if !r.All {
@@ -488,7 +488,7 @@ func (s *Store) Unread(ctx context.Context, agent string) (total, urgent int, er
 func (s *Store) UnreadByMode(ctx context.Context, agent string) (total, urgent, full, direct int, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(m.urgent),0), coalesce(sum(r.mode='full'),0), coalesce(sum(r.direct),0)
 		FROM receipts r JOIN messages m ON m.id=r.message_id
-		WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, agent, s.ms()-BriefTTL.Milliseconds()).Scan(&total, &urgent, &full, &direct)
+		WHERE r.agent_id=? AND r.read_at=0`+unreadFilter, agent, s.briefCut()).Scan(&total, &urgent, &full, &direct)
 	return
 }
 

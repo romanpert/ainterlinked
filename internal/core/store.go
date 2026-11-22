@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -125,6 +126,7 @@ type Store struct {
 	machine string
 	alive   func(pids []int) (map[int]bool, error)
 	now     func() time.Time
+	limits  atomic.Pointer[Limits]
 
 	keyPath string     // the hub secret agent keys derive from (keys.go)
 	keyMu   sync.Mutex // guards secret
@@ -143,6 +145,8 @@ type Options struct {
 	Alive   func(pids []int) (map[int]bool, error)
 	// Busy is how long to wait for another writer (0 = 10 s).
 	Busy time.Duration
+	// Limits are the user's terms (nil = DefaultLimits).
+	Limits *Limits
 }
 
 // Open opens (creating if needed) the hub database at path.
@@ -187,8 +191,14 @@ func Open(path string, opt Options) (*Store, error) {
 	if opt.Stale <= 0 {
 		opt.Stale = 45 * time.Second
 	}
-	return &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now,
-		keyPath: filepath.Join(filepath.Dir(path), "hub.key")}, nil
+	s := &Store{db: db, stale: opt.Stale, machine: opt.Machine, alive: opt.Alive, now: time.Now,
+		keyPath: filepath.Join(filepath.Dir(path), "hub.key")}
+	limits := DefaultLimits()
+	if opt.Limits != nil {
+		limits = *opt.Limits
+	}
+	s.SetLimits(limits)
+	return s, nil
 }
 
 // Close closes the database.
@@ -311,7 +321,7 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		{`DELETE FROM events WHERE ts < ?`, cut},
 		// Briefs nobody read in time are stale news, not mail to keep.
 		// (read_at = now, so they stay in history for the retention window.)
-		{`UPDATE receipts SET read_at=strftime('%s','now')*1000 WHERE read_at=0 AND mode='brief' AND message_id IN (SELECT id FROM messages WHERE created_at < ?)`, s.ms() - BriefTTL.Milliseconds()},
+		{`UPDATE receipts SET read_at=strftime('%s','now')*1000 WHERE read_at=0 AND mode='brief' AND message_id IN (SELECT id FROM messages WHERE created_at < ?)`, s.briefCut()},
 		{`DELETE FROM locks WHERE expires_at < ?`, s.ms()},
 		// A refilled broadcast budget is the same as none.
 		{`DELETE FROM broadcast_budget WHERE full_at < ?`, s.ms()},

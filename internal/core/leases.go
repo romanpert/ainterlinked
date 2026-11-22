@@ -19,6 +19,8 @@ import (
 //   - A hook-driven agent's reservations lapse IdleLapse after its turn ended
 //     (idle/done): forgotten reservations clear themselves in minutes.
 //     Agents without hooks don't report turns, so their TTL alone applies.
+//
+// Starting values: see Limits.
 const (
 	AutoLease = 15 * time.Minute
 	IdleLapse = 15 * time.Minute
@@ -29,21 +31,25 @@ const autoReason = "editing (auto-reserved)"
 
 // lapses reports when a's reservations made before its current idle spell
 // stop applying (0: they don't lapse).
-func lapses(via, state string, since int64) int64 {
-	if !strings.Contains(via, "hook") || since <= 0 || (state != "idle" && state != "done") {
+func (l Limits) lapses(via, state string, since int64) int64 {
+	if l.IdleLapseMinutes == 0 || !strings.Contains(via, "hook") || since <= 0 || (state != "idle" && state != "done") {
 		return 0
 	}
-	return since + IdleLapse.Milliseconds()
+	return since + minutes(l.IdleLapseMinutes).Milliseconds()
 }
 
 // lapse ends the reservations of agents idle for longer than IdleLapse and
 // tells them once. Reservations granted while idle (from the queue, which
 // caps them at idleGrantTTL) keep their own term.
 func (s *Store) lapse(tx *sql.Tx) error {
+	after := minutes(s.lim().IdleLapseMinutes)
+	if after == 0 {
+		return nil
+	}
 	now := s.ms()
 	rows, err := tx.Query(`SELECT l.id, l.pattern, a.id, a.name FROM locks l JOIN agents a ON a.id=l.agent_id
 		WHERE l.expires_at>? AND a.online=1 AND a.state IN ('idle','done') AND instr(a.via,'hook')>0
-		AND a.state_since>0 AND a.state_since<? AND l.created_at<=a.state_since`, now, now-IdleLapse.Milliseconds())
+		AND a.state_since>0 AND a.state_since<? AND l.created_at<=a.state_since`, now, now-after.Milliseconds())
 	if err != nil {
 		return err
 	}
@@ -75,7 +81,7 @@ func (s *Store) lapse(tx *sql.Tx) error {
 		who := Agent{ID: aid, Name: names[aid]}
 		notice(tx, now, who, "reservations lapsed",
 			fmt.Sprintf("Your reservation(s) of %s lapsed: your turn ended over %s ago, so others may edit them now. Editing a file reserves it again; reserve_files does too.",
-				clip(strings.Join(pats, ", "), 300), IdleLapse))
+				clip(strings.Join(pats, ", "), 300), after))
 		event(tx, now, &who, "lock", fmt.Sprintf("%s's reservations lapsed (idle): %s", who.Name, clip(strings.Join(pats, ", "), 120)))
 	}
 	return s.lapseUnused(tx)
@@ -84,7 +90,7 @@ func (s *Store) lapse(tx *sql.Tx) error {
 // lapseUnused ends explicit reservations that went unused past their
 // UseWindow, the term stated when they were made, and tells the holder once.
 func (s *Store) lapseUnused(tx *sql.Tx) error {
-	now := s.ms()
+	now, terms := s.ms(), s.lim()
 	rows, err := tx.Query(`SELECT `+lockColsL+` FROM locks l WHERE l.expires_at>? AND l.reason<>?`, now, autoReason)
 	if err != nil {
 		return err
@@ -96,7 +102,7 @@ func (s *Store) lapseUnused(tx *sql.Tx) error {
 			rows.Close()
 			return err
 		}
-		if at := unusedAt(l); at > 0 && at <= now {
+		if at := terms.unusedAt(l); at > 0 && at <= now {
 			unused = append(unused, l)
 		}
 	}
@@ -112,8 +118,8 @@ func (s *Store) lapseUnused(tx *sql.Tx) error {
 		who := Agent{ID: l.AgentID, Name: l.Agent}
 		notice(tx, now, who, "reservation lapsed (unused)",
 			fmt.Sprintf("Your reservation of %s lapsed on its terms: no edits in it for %s, so others may edit it now. Editing a file or reserving it again takes it back if it is still free.",
-				l.Pattern, UseWindow(l.Pattern)))
-		event(tx, now, &who, "lock", fmt.Sprintf("%s's reservation of %s lapsed (unused for %s)", who.Name, l.Pattern, UseWindow(l.Pattern)))
+				l.Pattern, terms.UseWindow(l.Pattern)))
+		event(tx, now, &who, "lock", fmt.Sprintf("%s's reservation of %s lapsed (unused for %s)", who.Name, l.Pattern, terms.UseWindow(l.Pattern)))
 	}
 	return nil
 }
@@ -163,11 +169,15 @@ func (s *Store) TouchFile(ctx context.Context, agent, file string) (*Lock, error
 			}
 		}
 		now := s.ms()
-		until := now + AutoLease.Milliseconds()
+		lease := minutes(s.lim().AutoReserveMinutes).Milliseconds()
+		until := now + lease
 		for _, id := range used { // an edit inside an explicit reservation is use: it renews it
 			if _, err := tx.Exec(`UPDATE locks SET used_at=? WHERE id=?`, now, id); err != nil {
 				return err
 			}
+		}
+		if lease == 0 {
+			return nil // the user has editing reserve nothing
 		}
 		if mine {
 			// Renew automatic leases on this file; explicit ones keep their term.

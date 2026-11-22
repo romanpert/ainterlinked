@@ -40,6 +40,7 @@ type Lock struct {
 // while it is used: it lapses after a window without edits inside it, shorter
 // the more it covers. Each edit inside it, or reserving it again, renews it;
 // its TTL still caps it. Automatic reservations (made by editing) keep AutoLease.
+// Starting values: see Limits.
 const (
 	FolderUse  = 30 * time.Minute // a folder or a glob
 	ProjectUse = 10 * time.Minute // the whole project (**)
@@ -47,35 +48,39 @@ const (
 
 // UseWindow is how long pattern stays reserved without an edit inside it
 // (0: a single file, which only its TTL and the idle lapse end).
-func UseWindow(pattern string) time.Duration {
+func (l Limits) UseWindow(pattern string) time.Duration {
 	switch {
 	case pattern == "**":
-		return ProjectUse
+		return minutes(l.ProjectUseMinutes)
 	case strings.ContainsAny(pattern, "*?["):
-		return FolderUse
+		return minutes(l.FolderUseMinutes)
 	}
 	return 0
 }
 
-func leaseTerms(pattern string, expiresAt int64) string {
+func (l Limits) leaseTerms(pattern string, expiresAt int64) string {
 	until := time.UnixMilli(expiresAt).Format("15:04")
-	if w := UseWindow(pattern); w > 0 {
+	if w := l.UseWindow(pattern); w > 0 {
 		return fmt.Sprintf("covers more than one file, so it lapses after %s without edits in it (editing inside it or reserving again renews it); ends at %s at the latest", w, until)
 	}
-	return fmt.Sprintf("held until %s; it lapses earlier if your turn ends and you stay idle for %s", until, IdleLapse)
+	if l.IdleLapseMinutes == 0 {
+		return "held until " + until
+	}
+	return fmt.Sprintf("held until %s; it lapses earlier if your turn ends and you stay idle for %s", until, minutes(l.IdleLapseMinutes))
 }
 
 // unusedAt is when an explicit reservation lapses for lack of use (0 for
 // automatic ones, which renew by editing anyway).
-func unusedAt(l Lock) int64 {
-	if l.Reason == autoReason || UseWindow(l.Pattern) == 0 {
+func (t Limits) unusedAt(l Lock) int64 {
+	window := t.UseWindow(l.Pattern)
+	if l.Reason == autoReason || window == 0 {
 		return 0
 	}
 	used := l.UsedAt
 	if used < l.CreatedAt {
 		used = l.CreatedAt
 	}
-	return used + UseWindow(l.Pattern).Milliseconds()
+	return used + window.Milliseconds()
 }
 
 // LockReq reserves one or more path patterns (relative to the project root;
@@ -232,6 +237,7 @@ func (s *Store) liveLocks(ctx context.Context, q interface {
 		return nil, err
 	}
 	defer rows.Close()
+	terms := s.lim()
 	var out []Lock
 	for rows.Next() {
 		var l Lock
@@ -241,10 +247,10 @@ func (s *Store) liveLocks(ctx context.Context, q interface {
 			&via, &state, &since); err != nil {
 			return nil, err
 		}
-		if at := lapses(via, state, since); at > 0 && l.CreatedAt <= since && at < l.ExpiresAt {
+		if at := terms.lapses(via, state, since); at > 0 && l.CreatedAt <= since && at < l.ExpiresAt {
 			l.LapsesAt = at
 		}
-		if at := unusedAt(l); at > 0 && at < l.ExpiresAt && (l.LapsesAt == 0 || at < l.LapsesAt) {
+		if at := terms.unusedAt(l); at > 0 && at < l.ExpiresAt && (l.LapsesAt == 0 || at < l.LapsesAt) {
 			l.LapsesAt = at
 		}
 		out = append(out, l)
@@ -339,7 +345,7 @@ func (s *Store) Reserve(ctx context.Context, r LockReq) (LockResult, error) {
 			id, _ := out.LastInsertId()
 			res.Granted = append(res.Granted, Lock{ID: id, ProjectPath: me.ProjectPath, Pattern: pat, AgentID: me.ID, Agent: me.Name,
 				Reason: reason, TaskID: r.Task, CreatedAt: now, ExpiresAt: now + ttl.Milliseconds(), UsedAt: now,
-				Terms: leaseTerms(pat, now+ttl.Milliseconds())})
+				Terms: s.lim().leaseTerms(pat, now+ttl.Milliseconds())})
 		}
 		if len(res.Granted) > 0 {
 			pats := make([]string, len(res.Granted))

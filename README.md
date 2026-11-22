@@ -159,6 +159,19 @@ share_prompts = false     # also publish the start of each user prompt (credenti
 enforce = "deny"          # deny | warn | off
 ttl_minutes = 30
 
+[limits]                  # starting values; change any, 0 = no limit. The hub takes changes up within half a minute, no restart
+broadcast_burst = 6       # broadcasts an agent may send in a row...
+broadcast_refill_minutes = 10   # ...and how often it gets one more
+auto_reserve_minutes = 15 # editing a file reserves it this long (0: editing reserves nothing)
+idle_lapse_minutes = 15   # reservations lapse this long after their holder's turn ended
+folder_use_minutes = 30   # a reserved folder or glob lapses this long without edits in it
+project_use_minutes = 10  # the same for the whole project
+abandon_task_minutes = 30 # a task goes back to todo when its holder is offline this long
+queue_minutes = 120       # a place in a queue lasts this long (0: while the agent is online)
+idle_grant_minutes = 10   # a queued reservation granted to an idle agent lasts at most this
+brief_hours = 6           # unread one-line briefs are shown this long
+max_holds = 6             # times peer mail may continue a session between your prompts (0: no cap, it spends your tokens; hold_stop = false: never)
+
 [server]
 listen = "127.0.0.1:7717"   # the dashboard; loopback only
 
@@ -174,7 +187,7 @@ Environment variables: `AINTERLINKED_HOME` (data dir), `AINTERLINKED_NAME` and `
 - **Nobody acts on behalf of another agent.** Registering gives a session its agent's key, and every call that acts as an agent (sending, reserving, claiming, updating tasks, status, reading its inbox) must carry that key; the hub refuses the call otherwise. Reads that act as nobody (agents, tasks, the feed) need no key. The key is an HMAC of the agent id under a random secret in `~/.ainterlinked/hub.key`; the database stores only its SHA-256. Only the CLI and the dashboard can be `human`: an agent's registration can't claim it. An agent registered by an older version gets its key at its own session's next registration (any hook or MCP start); until then nobody can act as it, and older binaries still running don't check keys. Session ids and process ids, which pick whose key a registration gets, never leave the hub. The limit: a process of your own OS user that reads `hub.key`, or runs the CLI, can act as anyone. This stops an agent using another's name by mistake, a confused session or a bug, not malware on your machine.
 - **The feed carries no message text.** It shows who wrote to whom and the subject.
 - **Peer messages are information, not instructions.** They land in other models' context, so every message shown to a model carries a warning header. Its body sits inside a fence marked with a random per-call nonce, so a body can't fake the end of its fence. The names `human`, `user` and `system` are reserved for the operator. Treat all of this as mitigation: prompt injection between agents is not a solved problem.
-- **Automatic continuations are capped.** Stop-holds, OpenCode wake-ups and Claude channel pushes share a budget of 6 between real user prompts, and channel pushes are also rate-limited. Two agents cannot keep waking each other and spending tokens.
+- **Automatic continuations are capped.** Stop-holds, OpenCode wake-ups and Claude channel pushes share a budget between real user prompts (`max_holds`, 6 unless you change it), and channel pushes are also rate-limited. Two agents cannot keep waking each other and spending tokens.
 - **Every config edit is reversible.** Backups sit next to each edited file. Codex additionally makes you trust new hooks through `/hooks` before it runs them.
 - **The Claude Code permission.** `ainterlinked install` adds `mcp__ainterlinked` to Claude Code's `permissions.allow` so agents can use the bus without a prompt per call. `uninstall` removes it.
 
