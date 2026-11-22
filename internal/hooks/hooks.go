@@ -552,6 +552,15 @@ func Limits(p core.Prefs, d config.Delivery) (messages, chars int) {
 	return
 }
 
+// Inline is the length past which a pushed message arrives as a gist: the
+// agent's choice, else the config's.
+func Inline(p core.Prefs, d config.Delivery) int {
+	if p.InlineChars > 0 {
+		return p.InlineChars
+	}
+	return d.InlineChars
+}
+
 // maxBriefs caps one-line announcements per injection.
 const maxBriefs = 10
 
@@ -569,7 +578,7 @@ func Inject(ctx context.Context, c hub.Client, me string, d config.Delivery, p c
 	var msgs []core.Message
 	spent := 0
 	if u.Full > 0 {
-		_ = c.Call(ctx, "inbox", core.InboxReq{Agent: me, Limit: limit, Mode: core.ModeFull, Direct: directOnly, Budget: budget}, &msgs)
+		_ = c.Call(ctx, "inbox", core.InboxReq{Agent: me, Limit: limit, Mode: core.ModeFull, Direct: directOnly, Budget: budget, Inline: Inline(p, d)}, &msgs)
 		for _, m := range msgs {
 			spent += core.Cost(m)
 		}
@@ -622,6 +631,13 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Confi
 		fmt.Fprintf(&b, " %d other agent(s) online:\n%s", others, render.Briefing(peers, me, briefingPeers))
 	}
 	b.WriteString(boardLine(ctx, c, me, inProject))
+	// What sessions that left this checkout knew: a line each, read on demand.
+	var left []core.Handover
+	if c.Call(ctx, "handovers", core.HandoverReq{Agent: me.ID}, &left) == nil {
+		if s := render.Handovers(left); s != "" {
+			b.WriteString("\n" + s)
+		}
+	}
 	b.WriteString(covenantBrief(cfg, me.ID, me.ProjectPath))
 	if core.IsAutoName(me.Name, me.Harness, me.Project) && inProject > 0 {
 		b.WriteString("\nName yourself after your task (set_status name=<alias>) so peers can address you; a later session, in any IDE, picks your work up with set_status continue_as=<alias>.")

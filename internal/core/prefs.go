@@ -42,6 +42,7 @@ type Prefs struct {
 	Inject      string            `json:"inject,omitempty"`       // every_tool | turn | manual
 	MaxMessages int               `json:"max_messages,omitempty"` // per injection
 	MaxChars    int               `json:"max_chars,omitempty"`    // per injection
+	InlineChars int               `json:"inline_chars,omitempty"` // longer bodies arrive as a gist and a pointer
 	Topics      map[string]string `json:"topics,omitempty"`       // topic -> full | brief
 }
 
@@ -52,6 +53,7 @@ type PrefsReq struct {
 	Inject      string   `json:"inject,omitempty"`
 	MaxMessages int      `json:"max_messages,omitempty"`
 	MaxChars    int      `json:"max_chars,omitempty"`
+	InlineChars int      `json:"inline_chars,omitempty"`
 	Subscribe   []string `json:"subscribe,omitempty"`   // topics; "name:brief" for one-line delivery
 	Unsubscribe []string `json:"unsubscribe,omitempty"` // topics
 	Reset       bool     `json:"reset,omitempty"`       // back to defaults (topics kept)
@@ -62,6 +64,7 @@ type PrefsReq struct {
 const (
 	maxPrefMessages = 50
 	maxPrefChars    = 40000
+	minInlineChars  = 200
 	maxTopics       = 50
 )
 
@@ -89,8 +92,8 @@ func (s *Store) prefs(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, agent string) (Prefs, error) {
 	var p Prefs
-	err := q.QueryRowContext(ctx, `SELECT broadcasts,inject,max_messages,max_chars FROM prefs WHERE agent_id=?`, agent).
-		Scan(&p.Broadcasts, &p.Inject, &p.MaxMessages, &p.MaxChars)
+	err := q.QueryRowContext(ctx, `SELECT broadcasts,inject,max_messages,max_chars,inline_chars FROM prefs WHERE agent_id=?`, agent).
+		Scan(&p.Broadcasts, &p.Inject, &p.MaxMessages, &p.MaxChars, &p.InlineChars)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, err
 	}
@@ -126,6 +129,9 @@ func (s *Store) SetPrefs(ctx context.Context, r PrefsReq) (Prefs, error) {
 	if r.MaxChars < 0 || (r.MaxChars > 0 && r.MaxChars < 500) || r.MaxChars > maxPrefChars {
 		return Prefs{}, fmt.Errorf("max_chars must be 500-%d", maxPrefChars)
 	}
+	if r.InlineChars < 0 || (r.InlineChars > 0 && r.InlineChars < minInlineChars) || r.InlineChars > maxPrefChars {
+		return Prefs{}, fmt.Errorf("inline_chars must be %d-%d", minInlineChars, maxPrefChars)
+	}
 	me, err := s.Get(ctx, r.Agent)
 	if err != nil {
 		return Prefs{}, err
@@ -136,13 +142,14 @@ func (s *Store) SetPrefs(ctx context.Context, r PrefsReq) (Prefs, error) {
 				return err
 			}
 		}
-		_, err := tx.Exec(`INSERT INTO prefs(agent_id,broadcasts,inject,max_messages,max_chars) VALUES(?,?,?,?,?)
+		_, err := tx.Exec(`INSERT INTO prefs(agent_id,broadcasts,inject,max_messages,max_chars,inline_chars) VALUES(?,?,?,?,?,?)
 			ON CONFLICT(agent_id) DO UPDATE SET
 			  broadcasts=CASE WHEN excluded.broadcasts<>'' THEN excluded.broadcasts ELSE broadcasts END,
 			  inject=CASE WHEN excluded.inject<>'' THEN excluded.inject ELSE inject END,
 			  max_messages=CASE WHEN excluded.max_messages>0 THEN excluded.max_messages ELSE max_messages END,
-			  max_chars=CASE WHEN excluded.max_chars>0 THEN excluded.max_chars ELSE max_chars END`,
-			me.ID, r.Broadcasts, r.Inject, r.MaxMessages, r.MaxChars)
+			  max_chars=CASE WHEN excluded.max_chars>0 THEN excluded.max_chars ELSE max_chars END,
+			  inline_chars=CASE WHEN excluded.inline_chars>0 THEN excluded.inline_chars ELSE inline_chars END`,
+			me.ID, r.Broadcasts, r.Inject, r.MaxMessages, r.MaxChars, r.InlineChars)
 		if err != nil {
 			return err
 		}

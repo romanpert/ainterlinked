@@ -163,6 +163,9 @@ func PeerMessages(list []core.Message, maxChars int) string {
 		if m.Subject != "" {
 			fmt.Fprintf(&one, ", subject: %s", strings.ReplaceAll(m.Subject, nonce, ""))
 		}
+		if m.Shortened > 0 {
+			fmt.Fprintf(&one, ", a gist of ~%s tokens: get_thread %d for all of it", core.FormatTokens(int64(m.Shortened/4)), m.ID)
+		}
 		fmt.Fprintf(&one, " | fence %s>>\n%s\n<<end #%d | fence %s>>\n", nonce, strings.TrimRight(body, "\n"), m.ID, nonce)
 		s := one.String()
 		if maxChars > 0 && b.Len()+len(s) > maxChars && i > 0 {
@@ -376,7 +379,7 @@ func Threads(list []core.ThreadSummary) string {
 }
 
 // Prefs renders an agent's delivery settings, filling in defaults.
-func Prefs(p core.Prefs, defMessages, defChars int, defInject string) string {
+func Prefs(p core.Prefs, defMessages, defChars, defInline int, defInject string) string {
 	or := func(v, d string) string {
 		if v == "" {
 			return d + " (default)"
@@ -405,8 +408,8 @@ func Prefs(p core.Prefs, defMessages, defChars int, defInject string) string {
 		}
 		topics = strings.Join(parts, ", ")
 	}
-	return fmt.Sprintf("broadcasts %s · inject %s · max_messages %s · max_chars %s · topics %s",
-		or(p.Broadcasts, core.DefaultBroadcasts), or(p.Inject, defInject), orN(p.MaxMessages, defMessages), orN(p.MaxChars, defChars), topics)
+	return fmt.Sprintf("broadcasts %s · inject %s · max_messages %s · max_chars %s · inline_chars %s · topics %s",
+		or(p.Broadcasts, core.DefaultBroadcasts), or(p.Inject, defInject), orN(p.MaxMessages, defMessages), orN(p.MaxChars, defChars), orN(p.InlineChars, defInline), topics)
 }
 
 // Briefing lists peers for a session start without flooding the context:

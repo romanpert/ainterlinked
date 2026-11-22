@@ -494,7 +494,7 @@ func (s *Server) pushLoop() {
 		}
 		limit, budget := hooks.Limits(p, s.cfg.Delivery)
 		var msgs []core.Message
-		if err := s.client.Call(s.life, "inbox", core.InboxReq{Agent: id, Limit: limit, Mode: core.ModeFull, Direct: true, Budget: budget}, &msgs); err != nil || len(msgs) == 0 {
+		if err := s.client.Call(s.life, "inbox", core.InboxReq{Agent: id, Limit: limit, Mode: core.ModeFull, Direct: true, Budget: budget, Inline: hooks.Inline(p, s.cfg.Delivery)}, &msgs); err != nil || len(msgs) == 0 {
 			continue
 		}
 		last, hour = time.Now(), append(hour, time.Now())

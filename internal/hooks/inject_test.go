@@ -147,13 +147,28 @@ func TestAgentsTuneTheirOwnDelivery(t *testing.T) {
 	}
 }
 
+// By default a long message is pushed as a gist with its size and where to
+// read it whole; short ones arrive whole beside it.
+func TestLongMailIsPushedAsAGist(t *testing.T) {
+	e := setup(t)
+	e.as("1", "claude-code", "SessionStart", nil)
+	e.as("2", "codex", "SessionStart", nil)
+	long := "Cart review:\n" + strings.Repeat("rounding is off by a cent; ", 100)
+	e.send("2", "1", long)
+	e.send("2", "1", "short one")
+	got := tool(e, "1")
+	if !strings.Contains(got, "a gist of ~") || !strings.Contains(got, "for all of it") || !strings.Contains(got, "short one") || strings.Count(got, "rounding is off") > 15 {
+		t.Fatalf("%s", got)
+	}
+}
+
 // A long message beyond the character budget is cut with a pointer, and
 // the next ones wait instead of being marked read and dropped.
 func TestBudgetNeverLosesMessages(t *testing.T) {
 	e := setup(t)
 	e.as("1", "claude-code", "SessionStart", nil)
 	e.as("2", "codex", "SessionStart", nil)
-	e.prefs("1", core.PrefsReq{MaxChars: 1000, MaxMessages: 10})
+	e.prefs("1", core.PrefsReq{MaxChars: 1000, MaxMessages: 10, InlineChars: 40000}) // whole bodies: the budget cuts
 	e.send("2", "1", strings.Repeat("á", 900)) // multi-byte: the cut must not split a rune
 	e.send("2", "1", "short one")
 	got := tool(e, "1")

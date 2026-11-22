@@ -336,6 +336,9 @@ func (s *Store) Prune(ctx context.Context, keep time.Duration) error {
 		// A session's spend is rewritten on every read: an old row is a
 		// session long over, past what facts look back on (the same week).
 		{`DELETE FROM spend WHERE updated_at < ?`, cut},
+		// A handover is news of a session that left: past the week nobody
+		// carries that work on from it.
+		{`DELETE FROM handovers WHERE created_at < ?`, cut},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.sql, q.arg); err != nil {
 			return err

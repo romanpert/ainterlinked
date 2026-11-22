@@ -72,11 +72,14 @@ func toolDefs(l core.Limits) []tool {
 			obj(prop{"broadcasts": prop{"type": "string", "enum": []string{core.ModeFull, core.ModeBrief, core.ModeOff}, "description": "Group messages: full, brief (one line, default) or off (only the human's urgent mail still arrives); group mail never holds your turn open"},
 				"inject":       prop{"type": "string", "enum": []string{core.InjectEveryTool, core.InjectTurn, core.InjectManual}, "description": "When mail enters your context: after tool calls, only at prompt/turn end, or never (you call read_inbox)"},
 				"max_messages": num("Messages per injection"), "max_chars": num("Characters per injection (500-40000)"),
-				"subscribe": strs("Topics to receive (send_message to='#topic'); 'name:brief' for one-line delivery"), "unsubscribe": strs("Topics to drop"),
+				"inline_chars": num("Longer messages arrive as a gist and a pointer (200-40000)"),
+				"subscribe":    strs("Topics to receive (send_message to='#topic'); 'name:brief' for one-line delivery"), "unsubscribe": strs("Topics to drop"),
 				"reset": boo("Back to defaults (topics kept)")}), nil},
 		{"wait_for_messages", "Block until a message arrives or the timeout passes, then return it. Use to wait for a peer's answer or for work.",
 			obj(prop{"timeout_seconds": num("Default 50, max 600")}), nil},
 		{"get_thread", "Show a whole conversation thread by any message id in it.", obj(prop{"message_id": num("Message id")}, "message_id"), ro()},
+		{"handover", "What sessions that left this checkout knew. No arguments lists them, one line each; id reads one in full. note leaves your own for whoever continues your work (one is written from your transcript when you leave, so add a note only to say something it wouldn't).",
+			obj(prop{"id": num("Handover to read"), "note": str("Your own handover: where the work stands, what's next, pointers to files/commits")}), nil},
 		{"create_task", "Add a task to a shared board (default board: your project). Others can claim it.",
 			obj(prop{"title": str("Task title"), "body": str("Details / acceptance criteria"), "board": str("Board name, default your project"),
 				"priority": num("0 urgent, 1 high, 2 normal (default), 3 low"), "depends_on": nums("Task ids that must finish first"),
@@ -176,6 +179,7 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		get("inject", &r.Inject)
 		get("max_messages", &r.MaxMessages)
 		get("max_chars", &r.MaxChars)
+		get("inline_chars", &r.InlineChars)
 		get("subscribe", &r.Subscribe)
 		get("unsubscribe", &r.Unsubscribe)
 		get("reset", &r.Reset)
@@ -242,6 +246,10 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			var mine []core.Task
 			_ = c.Call(ctx, "tasks", core.TaskFilter{Agent: me, Mine: true, Open: true}, &mine)
 			msg += fmt.Sprintf("\nContinuing %s: %d unread message(s), %d open task(s) of yours. read_inbox threads=true lists your conversations.", r.ContinueAs, u.Total, len(mine))
+			var took []core.Handover
+			if c.Call(ctx, "handovers", core.HandoverReq{Agent: me, Taken: true}, &took) == nil && len(took) > 0 {
+				msg += fmt.Sprintf("\nIts handover: #%d, ~%s tokens: %s (handover id=%d reads it).", took[0].ID, core.FormatTokens(int64(took[0].Chars/4)), took[0].Gist, took[0].ID)
+			}
 			if len(mine) > 0 {
 				msg += "\n" + render.Tasks(mine)
 			}
@@ -303,6 +311,33 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			return fmt.Sprintf("No messages after %ds.", t), nil
 		}
 		return render.PeerMessages(list, 0), nil
+	case "handover":
+		var id int64
+		var note string
+		get("id", &id)
+		get("note", &note)
+		switch {
+		case note != "":
+			var h core.Handover
+			if err := c.Call(ctx, "handover_note", core.HandoverNoteReq{Agent: me, Note: note}, &h); err != nil {
+				return "", err
+			}
+			return "ok: your handover is left for whoever continues your work; a later note replaces it.", nil
+		case id > 0:
+			var h core.Handover
+			if err := c.Call(ctx, "handover", core.HandoverReq{Agent: me, ID: id}, &h); err != nil {
+				return "", err
+			}
+			return render.Handover(h), nil
+		}
+		var list []core.Handover
+		if err := c.Call(ctx, "handovers", core.HandoverReq{Agent: me}, &list); err != nil {
+			return "", err
+		}
+		if len(list) == 0 {
+			return "No handovers left in this checkout by sessions that are gone.", nil
+		}
+		return render.Handovers(list), nil
 	case "get_thread":
 		var id int64
 		get("message_id", &id)
@@ -492,7 +527,7 @@ func (s *Server) prefsLine(p core.Prefs) string {
 	if !s.cfg.Delivery.OnTool {
 		inject = core.InjectTurn
 	}
-	return render.Prefs(p, s.cfg.Delivery.MaxMessages, s.cfg.Delivery.MaxChars, inject)
+	return render.Prefs(p, s.cfg.Delivery.MaxMessages, s.cfg.Delivery.MaxChars, s.cfg.Delivery.InlineChars, inject)
 }
 
 // sentLine tells the sender who got what, without listing twenty names.

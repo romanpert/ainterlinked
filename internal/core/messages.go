@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Message is a note from one agent to one or more others.
@@ -27,6 +28,9 @@ type Message struct {
 	// resumes (idle without push delivery, or offline): don't block on them.
 	Away []string `json:"away,omitempty"`
 	Mode string   `json:"mode,omitempty"` // for a reader: full or brief
+	// Shortened is the body's full length when it was pushed as a gist
+	// (InboxReq.Inline): the reader pulls the rest with get_thread.
+	Shortened int `json:"shortened,omitempty"`
 }
 
 // SystemSender is the sender id/name of notices the hub itself sends (a
@@ -354,6 +358,46 @@ type InboxReq struct {
 	// past it stay unread for the next one instead of being marked read
 	// and cut off. The first message is always taken.
 	Budget int `json:"budget,omitempty"`
+	// Inline: a body longer than this arrives as a gist of about half of
+	// it, with its full size (0 = whole). For mail pushed into a context;
+	// what an agent asks for (read_inbox, get_thread) comes whole.
+	Inline int `json:"inline,omitempty"`
+}
+
+// Gist shortens a body to about n characters for a reader who pulls the
+// rest only if it wants it: at a line or word end near n, never inside a
+// character.
+func Gist(body string, n int) string {
+	if n <= 0 || len(body) <= n {
+		return body
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	head := body[:cut]
+	if i := strings.LastIndexByte(head, '\n'); i >= n*2/3 {
+		head = head[:i]
+	} else if i := strings.LastIndexAny(head, " \t"); i >= n*2/3 {
+		head = head[:i]
+	}
+	return strings.TrimRight(head, " \t\n") + " …"
+}
+
+// shorten turns each full-mode body longer than inline into its gist.
+func shorten(list []Message, inline int) []Message {
+	if inline <= 0 {
+		return list
+	}
+	out := make([]Message, len(list))
+	for i, m := range list {
+		if m.Mode != ModeBrief && len(m.Body) > inline {
+			m.Shortened = len(m.Body)
+			m.Body = Gist(m.Body, inline/2)
+		}
+		out[i] = m
+	}
+	return out
 }
 
 // unreadFilter hides briefs older than BriefTTL: stale announcements.
@@ -420,6 +464,7 @@ func (s *Store) Inbox(ctx context.Context, r InboxReq) ([]Message, error) {
 		return out, rows.Err()
 	}
 	within := func(got []Message) []Message {
+		got = shorten(got, r.Inline)
 		if r.Budget <= 0 {
 			return got
 		}

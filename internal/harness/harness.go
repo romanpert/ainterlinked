@@ -333,7 +333,7 @@ func jsonWiring(file string, key ...string) (mcp, legacy bool) {
 var ToolNames = []string{
 	"whoami", "list_agents", "set_status", "set_delivery", "send_message", "read_inbox", "wait_for_messages", "get_thread",
 	"create_task", "list_tasks", "list_boards", "claim_task", "want_task", "update_task",
-	"reserve_files", "release_files", "list_reservations", "activity_feed",
+	"reserve_files", "release_files", "list_reservations", "activity_feed", "handover",
 }
 
 //go:embed opencode_plugin.js

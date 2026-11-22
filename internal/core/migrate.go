@@ -77,6 +77,26 @@ CREATE TABLE IF NOT EXISTS spend(
   PRIMARY KEY(agent_id, cause)
 );
 CREATE INDEX IF NOT EXISTS spend_cause ON spend(cause, updated_at);
+
+-- v8: what a session that left knew, for whoever carries its work on
+-- (handover.go): one per agent and harness session.
+CREATE TABLE IF NOT EXISTS handovers(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  session_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  harness TEXT NOT NULL,
+  machine TEXT NOT NULL DEFAULT '',
+  project_path TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL,
+  gist TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  taken_by TEXT NOT NULL DEFAULT '',
+  UNIQUE(agent_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS handovers_place ON handovers(machine, project_path, created_at);
 `
 
 // addedColumns are applied with ALTER TABLE when missing, so a database made
@@ -94,6 +114,8 @@ var addedColumns = []struct{ table, column, ddl string }{
 	{"receipts", "direct", `ALTER TABLE receipts ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`},
 	// v5: SHA-256 of the agent's key (keys.go); '' = registered by an older version.
 	{"agents", "key_hash", `ALTER TABLE agents ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`},
+	// v8: bodies longer than this arrive as a gist and a pointer (0: config's).
+	{"prefs", "inline_chars", `ALTER TABLE prefs ADD COLUMN inline_chars INTEGER NOT NULL DEFAULT 0`},
 }
 
 // migrate brings db to the current schema.
@@ -124,8 +146,8 @@ func upgraded(db *sql.DB) bool {
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine','spend')`).Scan(&n)
-	return err == nil && n == 7
+	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine','spend','handovers')`).Scan(&n)
+	return err == nil && n == 8
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {

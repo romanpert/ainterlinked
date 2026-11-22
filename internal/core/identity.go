@@ -111,8 +111,8 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 			{`DELETE FROM locks WHERE agent_id=?`, []any{old.ID}},
 			{`UPDATE waiters SET agent_id=? WHERE agent_id=? AND project_path=?`, []any{self.ID, old.ID, self.ProjectPath}},
 			{`DELETE FROM waiters WHERE agent_id=?`, []any{old.ID}},
-			{`INSERT OR IGNORE INTO prefs(agent_id,broadcasts,inject,max_messages,max_chars)
-				SELECT ?,broadcasts,inject,max_messages,max_chars FROM prefs WHERE agent_id=?`, []any{self.ID, old.ID}},
+			{`INSERT OR IGNORE INTO prefs(agent_id,broadcasts,inject,max_messages,max_chars,inline_chars)
+				SELECT ?,broadcasts,inject,max_messages,max_chars,inline_chars FROM prefs WHERE agent_id=?`, []any{self.ID, old.ID}},
 			{`INSERT OR IGNORE INTO subscriptions(agent_id,topic,mode) SELECT ?,topic,mode FROM subscriptions WHERE agent_id=?`, []any{self.ID, old.ID}},
 			{`DELETE FROM prefs WHERE agent_id=?`, []any{old.ID}},
 			{`DELETE FROM subscriptions WHERE agent_id=?`, []any{old.ID}},
@@ -121,6 +121,10 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 			if _, err := tx.Exec(m.sql, m.args...); err != nil {
 				return err
 			}
+		}
+		// What it knew is now the successor's to read, no longer on offer.
+		if err := takeHandovers(tx, old.ID, self.ID); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(`UPDATE agents SET name=?, role=COALESCE(NULLIF(role,''),?), last_seen=? WHERE id=?`, name, old.Role, now, self.ID); err != nil {
 			return err

@@ -41,6 +41,10 @@ type Delivery struct {
 	ClaudeChannel  bool `toml:"claude_channel"`   // push into idle Claude Code sessions (needs --channels)
 	MaxMessages    int  `toml:"max_messages"`     // per injection
 	MaxChars       int  `toml:"max_chars"`        // per injection
+	// InlineChars: a pushed message longer than this arrives as a gist with
+	// its size and a pointer (get_thread); the reader pulls the rest only if
+	// it wants it. Each agent can change it (set_delivery inline_chars).
+	InlineChars int `toml:"inline_chars"`
 }
 
 // Presence controls heartbeats and activity tracking.
@@ -87,7 +91,7 @@ func Default() Config {
 		Machine: strings.ToLower(host),
 		Delivery: Delivery{
 			OnSessionStart: true, OnPrompt: true, OnTool: true, HoldStop: true,
-			ClaudeChannel: true, MaxMessages: 5, MaxChars: 4000,
+			ClaudeChannel: true, MaxMessages: 5, MaxChars: 4000, InlineChars: 600,
 		},
 		Presence:  Presence{HeartbeatSeconds: 10, StaleSeconds: 45, TrackActivity: true},
 		Locks:     Locks{Enforce: "deny", TTLMinutes: 30},

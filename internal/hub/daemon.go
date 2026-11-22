@@ -16,6 +16,7 @@ import (
 	"github.com/romanpert/ainterlinked/internal/covenant"
 	"github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/proc"
+	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
 // The hub process: one per machine (per AINTERLINKED_HOME), started by the
@@ -35,6 +36,8 @@ func LockPath() string { return filepath.Join(config.Home(), "hub.lock") }
 const (
 	idleExit   = 30 * time.Minute // nobody connected this long: exit
 	checkEvery = 20 * time.Second
+	// handoversPerTick bounds the transcripts read for handovers per check.
+	handoversPerTick = 2
 )
 
 // ErrRunning: another hub process holds this hub.
@@ -111,6 +114,9 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 			stop()
 			return
 		}
+		// Sessions that left hand their work over from their transcripts,
+		// a few per tick: reading a transcript is the hub's work, not theirs.
+		_, _ = s.Store.WriteHandovers(ctx, handoversPerTick, transcript.ReadHandover)
 		if time.Since(pruned) > time.Hour {
 			_ = s.Store.Prune(ctx, core.Retention)
 			pruned = time.Now()

@@ -24,6 +24,7 @@ var actors = map[string]string{
 	"trespass": "writer", "turn": "agent", "spend": "agent", "budget": "by",
 	"reserve": "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
 	"note": "agent", "machine_sample": "agent",
+	"handovers": "agent", "handover": "agent", "handover_note": "agent",
 }
 
 // reads need no key: they name nobody's identity, or (register) they are
