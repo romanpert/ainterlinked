@@ -1,6 +1,7 @@
-// Command ainterlinked is the same program as interlinked under the project's
-// name, so `go install github.com/romanpert/ainterlinked/cmd/ainterlinked@latest`
-// gives the command people see in the docs. Both names work everywhere.
+// Command ainterlinked is a real-time bus for AI coding agents across
+// harnesses (Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode, ...).
+//
+//	go install github.com/romanpert/ainterlinked/cmd/ainterlinked@latest
 package main
 
 import (

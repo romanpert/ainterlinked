@@ -178,7 +178,7 @@ func trespass(ctx context.Context, c hub.Client, me core.Agent, in Input) string
 			f = filepath.Join(in.Cwd, f)
 		}
 		var l *core.Lock
-		if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: f}, &l); err != nil || l == nil || l.Agent == "interlinked" {
+		if err := c.Call(ctx, "check_file", hub.FileParam{Agent: me.ID, File: f}, &l); err != nil || l == nil || l.Agent == core.SystemSender {
 			continue
 		}
 		key := fmt.Sprintf("%d", l.ID)
@@ -194,14 +194,14 @@ func trespass(ctx context.Context, c hub.Client, me core.Agent, in Input) string
 		_ = c.Call(ctx, "trespass", core.TrespassReq{Writer: me.ID, LockID: l.ID, File: f, Program: commandProgram(cmd), ByUser: byUser,
 			Transcript: str(in.raw, "transcript_path")}, &t) // where the hub checks whose turn it was
 		_ = c.Call(ctx, "send", core.SendReq{From: me.ID, To: l.Agent, Subject: "I wrote to your reserved " + rel,
-			Body: fmt.Sprintf("interlinked noticed: my shell command (%s) wrote to %s, which you hold, %s. Task #%d is open for me to make it right with you; tell me what you need.",
+			Body: fmt.Sprintf("ainterlinked noticed: my shell command (%s) wrote to %s, which you hold, %s. Task #%d is open for me to make it right with you; tell me what you need.",
 				commandProgram(cmd), rel, origin, t.ID)}, nil)
 		told = append(told, fmt.Sprintf("%s (reserved by %s; task #%d)", rel, l.Agent, t.ID))
 	}
 	if len(told) == 0 {
 		return ""
 	}
-	return "[interlinked] That shell command wrote to a file another agent holds: " + strings.Join(told, ", ") +
+	return "[ainterlinked] That shell command wrote to a file another agent holds: " + strings.Join(told, ", ") +
 		". They have been told. Don't keep writing it: agree with them (restore their version, or hand them your change), then put the task in review with what you did; they close it. Next time queue for it (reserve_files wait=true)" +
 		map[bool]string{true: ", or, if the user wants it overridden, say so to them first.", false: "."}[byUser]
 }

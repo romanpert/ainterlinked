@@ -1,4 +1,4 @@
-// Package cli implements the interlinked command line.
+// Package cli implements the ainterlinked command line.
 package cli
 
 import (
@@ -17,6 +17,7 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
+	envvar "github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/harness"
 	"github.com/romanpert/ainterlinked/internal/hooks"
 	"github.com/romanpert/ainterlinked/internal/hub"
@@ -26,11 +27,11 @@ import (
 // Version is stamped at build time (-ldflags "-X .../cli.Version=x.y.z").
 var Version = "0.1.0-dev"
 
-const usage = `interlinked — a real-time bus for AI coding agents across harnesses
+const usage = `ainterlinked — a real-time bus for AI coding agents across harnesses
 
 Setup
   install [harness...] [--dry-run]   wire every detected harness (or the ones named)
-  uninstall [harness...] [--dry-run] remove interlinked from harnesses (all if none named)
+  uninstall [harness...] [--dry-run] remove ainterlinked from harnesses (all if none named)
   scan                               show detected harnesses and their wiring
   doctor                             check the installation end to end
   enable|disable <harness>           allow / mute a harness on the bus
@@ -71,7 +72,7 @@ func Main(args []string) int {
 		fmt.Print(usage)
 		return 0
 	case "version", "--version", "-v":
-		fmt.Println("interlinked", Version)
+		fmt.Println("ainterlinked", Version)
 		return 0
 	case "mcp":
 		return cmdMCP(rest)
@@ -150,7 +151,7 @@ func cmdMCP(args []string) int {
 	cfg := loadConfig()
 	client, err := hub.Open(cfg)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "interlinked:", err)
+		fmt.Fprintln(os.Stderr, "ainterlinked:", err)
 		return 1
 	}
 	defer client.Close()
@@ -164,7 +165,7 @@ func cmdMCP(args []string) int {
 	}
 	srv := mcp.New(cfg, client, *h)
 	if err := srv.Serve(context.Background(), os.Stdin, os.Stdout); err != nil && !errors.Is(err, io.EOF) {
-		fmt.Fprintln(os.Stderr, "interlinked:", err)
+		fmt.Fprintln(os.Stderr, "ainterlinked:", err)
 		return 1
 	}
 	return 0
@@ -181,7 +182,7 @@ func cmdHook(args []string) int {
 
 func cmdLaunch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: interlinked launch <claude|codex|gemini|...> [--name n] [--role r] [-- harness args]")
+		fmt.Fprintln(os.Stderr, "usage: ainterlinked launch <claude|codex|gemini|...> [--name n] [--role r] [-- harness args]")
 		return 2
 	}
 	target := args[0]
@@ -202,25 +203,25 @@ func cmdLaunch(args []string) int {
 	}
 	env := os.Environ()
 	if name != "" {
-		env = append(env, "INTERLINKED_NAME="+name)
+		env = append(env, envvar.Var("NAME")+"="+name)
 	}
 	if role != "" {
-		env = append(env, "INTERLINKED_ROLE="+role)
+		env = append(env, envvar.Var("ROLE")+"="+role)
 	}
 	bin := target
 	switch target {
 	case "claude", "claude-code":
 		bin = "claude"
 		if loadConfig().Delivery.ClaudeChannel {
-			env = append(env, "INTERLINKED_CHANNEL=1")
-			pass = append([]string{"--dangerously-load-development-channels", "server:interlinked"}, pass...)
+			env = append(env, envvar.Var("CHANNEL")+"=1")
+			pass = append([]string{"--dangerously-load-development-channels", "server:ainterlinked"}, pass...)
 		}
 	case "copilot-cli":
 		bin = "copilot"
 	}
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "interlinked: %s not found on PATH\n", bin)
+		fmt.Fprintf(os.Stderr, "ainterlinked: %s not found on PATH\n", bin)
 		return 1
 	}
 	c := exec.Command(path, pass...)
@@ -231,7 +232,7 @@ func cmdLaunch(args []string) int {
 		if errors.As(err, &ee) {
 			return ee.ExitCode()
 		}
-		fmt.Fprintln(os.Stderr, "interlinked:", err)
+		fmt.Fprintln(os.Stderr, "ainterlinked:", err)
 		return 1
 	}
 	return 0
@@ -248,19 +249,19 @@ func stableBin() (string, string) {
 			exe = r
 		}
 	}
-	if os.Getenv("INTERLINKED_BIN") != "" {
-		return os.Getenv("INTERLINKED_BIN"), ""
+	if b := envvar.Get("BIN"); b != "" {
+		return b, ""
 	}
 	low := strings.ToLower(filepath.ToSlash(exe))
 	ephemeral := strings.Contains(low, "/uv/cache") || strings.Contains(low, "/archive-v") || strings.Contains(low, "go-build") ||
 		strings.Contains(low, "/_npx/") || strings.Contains(low, "/appdata/local/temp/") || strings.HasPrefix(low, "/tmp/")
 	if ephemeral {
-		if lp, err := exec.LookPath("interlinked"); err == nil {
+		if lp, err := exec.LookPath("ainterlinked"); err == nil {
 			if abs, err := filepath.Abs(lp); err == nil {
 				return abs, ""
 			}
 		}
-		return exe, "interlinked is running from a temporary location (" + exe + "). Install it permanently first: pipx install interlinked  (or: uv tool install interlinked)"
+		return exe, "ainterlinked is running from a temporary location (" + exe + "). Install it permanently first: pipx install ainterlinked  (or: uv tool install ainterlinked)"
 	}
 	return exe, ""
 }
@@ -331,7 +332,7 @@ func cmdInstall(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w — fix it (or move it away) and run install again", err)
 	}
-	fmt.Printf("interlinked %s → %s\n\n", Version, filepath.ToSlash(bin))
+	fmt.Printf("ainterlinked %s → %s\n\n", Version, filepath.ToSlash(bin))
 	var notes []string
 	failed := 0
 	for _, h := range list {
@@ -386,7 +387,7 @@ func cmdInstall(ctx context.Context, args []string) error {
 		}
 	}
 	fmt.Printf("\nDone. New sessions in these harnesses join the bus automatically (restart open ones).\n")
-	fmt.Printf("See who's online: interlinked agents   ·   Dashboard: interlinked serve   ·   Undo: interlinked uninstall\n")
+	fmt.Printf("See who's online: ainterlinked agents   ·   Dashboard: ainterlinked serve   ·   Undo: ainterlinked uninstall\n")
 	if failed > 0 {
 		return fmt.Errorf("%d harness(es) failed (see above; their config files were left as they were)", failed)
 	}
@@ -407,7 +408,7 @@ func cmdUninstall(ctx context.Context, args []string) error {
 	}
 	for _, h := range list {
 		w := h.Wired(e)
-		if !w.MCP && !w.Hooks && len(names) == 0 {
+		if !w.MCP && !w.Hooks && !w.Legacy && len(names) == 0 {
 			continue
 		}
 		fmt.Printf("• %s\n", h.Name)
@@ -426,7 +427,7 @@ func cmdUninstall(ctx context.Context, args []string) error {
 		}
 	}
 	if !*dry {
-		fmt.Println("\nRemoved. Backups of every edited file sit next to it (*.bak-interlinked-*). The bus data stays in", tilde(config.Home()))
+		fmt.Println("\nRemoved. Backups of every edited file sit next to it (*.bak-ainterlinked-*). The bus data stays in", tilde(config.Home()))
 	}
 	return nil
 }
@@ -472,7 +473,7 @@ func yn(b bool) string {
 func cmdEnable(on bool) func(context.Context, []string) error {
 	return func(ctx context.Context, args []string) error {
 		if len(args) != 1 {
-			return errors.New("usage: interlinked enable|disable <harness>")
+			return errors.New("usage: ainterlinked enable|disable <harness>")
 		}
 		h := harness.ByID(args[0])
 		if h == nil {
@@ -489,7 +490,7 @@ func cmdEnable(on bool) func(context.Context, []string) error {
 		if on {
 			fmt.Printf("%s can talk on the bus.\n", h.Name)
 		} else {
-			fmt.Printf("%s is muted: its hooks and MCP server stay silent (wiring kept; `interlinked uninstall %s` removes it).\n", h.Name, h.ID)
+			fmt.Printf("%s is muted: its hooks and MCP server stay silent (wiring kept; `ainterlinked uninstall %s` removes it).\n", h.Name, h.ID)
 		}
 		return nil
 	}

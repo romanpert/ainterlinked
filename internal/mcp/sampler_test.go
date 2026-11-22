@@ -18,7 +18,7 @@ func TestOneSessionSamplesTheMachine(t *testing.T) {
 	sampleEvery = 50 * time.Millisecond
 	defer func() { sampleEvery = old }()
 	home := t.TempDir()
-	t.Setenv("INTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_HOME", home)
 	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Minute})
 	if err != nil {
 		t.Fatal(err)

@@ -87,7 +87,7 @@ func TestLoad(t *testing.T) {
 	if c, err := Load(dir); c != nil || err != nil {
 		t.Fatalf("no file: %v %v", c, err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".interlinked"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".ainterlinked"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(File)), []byte("## *\r\n- crlf works\r\n"), 0o644); err != nil {

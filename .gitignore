@@ -1,5 +1,6 @@
 /bin/
 /dist/
 /.code-review-graph/
+*.bak-ainterlinked-*
 *.bak-interlinked-*
 __pycache__/

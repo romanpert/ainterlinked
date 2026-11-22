@@ -17,7 +17,7 @@ import (
 var subcommandTools = map[string]bool{
 	"git": true, "go": true, "npm": true, "pnpm": true, "yarn": true, "bun": true, "deno": true,
 	"cargo": true, "docker": true, "kubectl": true, "uv": true, "pip": true, "poetry": true,
-	"gh": true, "dotnet": true, "terraform": true, "interlinked": true,
+	"gh": true, "dotnet": true, "terraform": true, "ainterlinked": true, "interlinked": true,
 }
 
 var knownVerbs = map[string]bool{

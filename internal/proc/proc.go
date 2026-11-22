@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/romanpert/ainterlinked/internal/env"
 )
 
 // wrappers are executables skipped while walking up to the harness.
@@ -18,7 +20,7 @@ var wrappers = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "fish": true, "dash": true, "ksh": true,
 	"cmd": true, "powershell": true, "pwsh": true, "conhost": true, "env": true,
 	"timeout": true, "uv": true, "uvx": true, "python": true, "python3": true, "py": true,
-	"npx": true, "npm": true, "interlinked": true, "nohup": true, "sudo": true,
+	"npx": true, "npm": true, "ainterlinked": true, "interlinked": true, "nohup": true, "sudo": true,
 	"mintty": true, "winpty": true, "git-bash": true, "busybox": true,
 }
 
@@ -39,9 +41,9 @@ func IsWrapper(name string) bool { return wrappers[normName(name)] }
 
 // Anchor returns the nearest ancestor of the current process that is not a
 // shell/launcher, and its name. It returns (0, "") if the tree can't be read.
-// INTERLINKED_ANCHOR_PID overrides detection (tests, exotic setups).
+// AINTERLINKED_ANCHOR_PID overrides detection (tests, exotic setups).
 func Anchor() (int, string) {
-	if v := os.Getenv("INTERLINKED_ANCHOR_PID"); v != "" {
+	if v := env.Get("ANCHOR_PID"); v != "" {
 		var pid int
 		for _, c := range v {
 			if c < '0' || c > '9' {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
@@ -143,7 +144,7 @@ func (c Context) Register(via, delivery, sessionID string) core.RegisterReq {
 		SessionID:   sessionID,
 		Via:         via,
 		Delivery:    delivery,
-		Name:        os.Getenv("INTERLINKED_NAME"),
-		Role:        os.Getenv("INTERLINKED_ROLE"),
+		Name:        env.Get("NAME"),
+		Role:        env.Get("ROLE"),
 	}
 }

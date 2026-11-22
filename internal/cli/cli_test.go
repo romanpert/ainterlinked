@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// sandbox points every path interlinked touches at temp dirs, and empties
+// sandbox points every path ainterlinked touches at temp dirs, and empties
 // PATH so no real harness CLI (claude, codex...) can be found or run: an
 // install here must never reach the developer's own configuration.
 func sandbox(t *testing.T) (home, userHome, project string) {
@@ -19,11 +19,11 @@ func sandbox(t *testing.T) (home, userHome, project string) {
 	if err := os.MkdirAll(project, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("INTERLINKED_HOME", home)
-	t.Setenv("INTERLINKED_USER_HOME", userHome)
-	t.Setenv("INTERLINKED_BIN", "/opt/interlinked/interlinked")
-	t.Setenv("INTERLINKED_ANCHOR_PID", "4242")
-	t.Setenv("INTERLINKED_NAME", "")
+	t.Setenv("AINTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_USER_HOME", userHome)
+	t.Setenv("AINTERLINKED_BIN", "/opt/ainterlinked/ainterlinked")
+	t.Setenv("AINTERLINKED_ANCHOR_PID", "4242")
+	t.Setenv("AINTERLINKED_NAME", "")
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("APPDATA", filepath.Join(userHome, "AppData", "Roaming"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
@@ -69,7 +69,7 @@ func mustRead(t *testing.T, p string) string {
 
 func TestVersionHelpAndUnknownCommand(t *testing.T) {
 	sandbox(t)
-	if out, _, code := cli(t, "", "version"); code != 0 || !strings.Contains(out, "interlinked "+Version) {
+	if out, _, code := cli(t, "", "version"); code != 0 || !strings.Contains(out, "ainterlinked "+Version) {
 		t.Fatalf("version: %d %q", code, out)
 	}
 	if out, _, code := cli(t, "", "help"); code != 0 || !strings.Contains(out, "install [harness...]") {
@@ -126,10 +126,10 @@ func TestInstallLifecycleInSandbox(t *testing.T) {
 		t.Fatalf("install: %d %q %q", code, out, errOut)
 	}
 	g := mustRead(t, geminiSettings)
-	if !strings.Contains(g, "interlinked") || !strings.Contains(g, "// mine") || !strings.Contains(g, "Dracula") {
+	if !strings.Contains(g, "ainterlinked") || !strings.Contains(g, "// mine") || !strings.Contains(g, "Dracula") {
 		t.Fatalf("gemini settings after install:\n%s", g)
 	}
-	if c := mustRead(t, cursorMCP); !strings.Contains(c, "/opt/interlinked/interlinked") {
+	if c := mustRead(t, cursorMCP); !strings.Contains(c, "/opt/ainterlinked/ainterlinked") {
 		t.Fatalf("cursor mcp.json doesn't use the stable binary:\n%s", c)
 	}
 	if _, err := os.Stat(filepath.Join(userHome, ".cursor", "hooks.json")); err != nil {
@@ -166,10 +166,10 @@ func TestInstallLifecycleInSandbox(t *testing.T) {
 		t.Fatalf("uninstall: %d %q %q", code, out, errOut)
 	}
 	g = mustRead(t, geminiSettings)
-	if strings.Contains(g, "interlinked") || !strings.Contains(g, "// mine") || !strings.Contains(g, "Dracula") {
+	if strings.Contains(g, "ainterlinked") || !strings.Contains(g, "// mine") || !strings.Contains(g, "Dracula") {
 		t.Fatalf("gemini settings after uninstall:\n%s", g)
 	}
-	if c, err := os.ReadFile(cursorMCP); err == nil && strings.Contains(string(c), "interlinked") {
+	if c, err := os.ReadFile(cursorMCP); err == nil && strings.Contains(string(c), "ainterlinked") {
 		t.Fatalf("cursor still wired:\n%s", c)
 	}
 	if _, errOut, code = cli(t, "", "install", "nonsense"); code != 1 || !strings.Contains(errOut, "unknown harness") {

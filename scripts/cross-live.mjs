@@ -1,10 +1,10 @@
 // Cross-harness live test: a real Claude Code and a real Codex work in the
-// same project over interlinked, and the run is recorded for demos.
+// same project over ainterlinked, and the run is recorded for demos.
 //
-//   node scripts/cross-live.mjs [codex] [interlinked]   (CROSS_OUT=dir for the material)
+//   node scripts/cross-live.mjs [codex] [ainterlinked]   (CROSS_OUT=dir for the material)
 //
 // One bounded run (hard limit below), on an isolated hub (a temporary
-// INTERLINKED_HOME), so the dashboard only shows these two agents. It spends
+// AINTERLINKED_HOME), so the dashboard only shows these two agents. It spends
 // one short Claude Haiku session from the Claude plan and one Codex session
 // from the ChatGPT plan; no API keys, no per-token billing.
 //
@@ -29,13 +29,13 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NPM = join(homedir(), "AppData/Roaming/npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe");
 const CODEX = process.argv[2] ?? NPM;
-const IL = process.argv[3] ?? join(homedir(), "go/bin/interlinked.exe");
+const IL = process.argv[3] ?? join(homedir(), "go/bin/ainterlinked.exe");
 const DRY = process.env.CROSS_DRY === "1";
 const HARD_LIMIT_MS = DRY ? 15_000 : 9 * 60 * 1000;
 const PORT = 7790 + Math.floor(Math.random() * 100);
 
 const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
-const OUT = process.env.CROSS_OUT ?? join(HERE, "..", "..", "interlinked-media", `cross-live-${stamp}`);
+const OUT = process.env.CROSS_OUT ?? join(HERE, "..", "..", "ainterlinked-media", `cross-live-${stamp}`);
 const ROOT = join(process.platform === "win32" ? "C:/tmp" : "/tmp", `il-cross-${stamp}`);
 const HOME = join(ROOT, "hub");
 const PROJECT = join(ROOT, "shop");
@@ -43,7 +43,7 @@ mkdirSync(OUT, { recursive: true });
 mkdirSync(HOME, { recursive: true });
 mkdirSync(PROJECT, { recursive: true });
 const c = randomBytes(2).toString("hex").toUpperCase();
-const env = { ...process.env, INTERLINKED_HOME: HOME };
+const env = { ...process.env, AINTERLINKED_HOME: HOME };
 
 const t0 = Date.now();
 const deadline = t0 + HARD_LIMIT_MS;
@@ -63,11 +63,11 @@ writeFileSync(join(PROJECT, "cart.js"), [
   "module.exports = { total };",
   "",
 ].join("\n"));
-writeFileSync(join(PROJECT, "README.md"), "# shop\n\nTiny demo project for interlinked.\n");
+writeFileSync(join(PROJECT, "README.md"), "# shop\n\nTiny demo project for ainterlinked.\n");
 // The owner's covenant: big enough that area rules are shown when an agent
 // works there (not all in the briefing), with one rule whose effect is visible.
-mkdirSync(join(PROJECT, ".interlinked"), { recursive: true });
-writeFileSync(join(PROJECT, ".interlinked", "covenant.md"), [
+mkdirSync(join(PROJECT, ".ainterlinked"), { recursive: true });
+writeFileSync(join(PROJECT, ".ainterlinked", "covenant.md"), [
   "# Covenant of shop",
   "## *",
   "- Keep changes small and focused on the task you hold.",
@@ -86,7 +86,7 @@ writeFileSync(join(PROJECT, ".interlinked", "covenant.md"), [
   "- Ask the owner before changing CI, deployment or anything that costs money.",
   "## tests/**",
   "- Tests are deterministic: no network, no sleeps, no real clock.",
-  "## .interlinked/covenant.md",
+  "## .ainterlinked/covenant.md",
   "- Propose changes to the owner; don't edit the covenant yourself.",
   "",
 ].join("\n"));
@@ -127,7 +127,7 @@ procs.push(recorder);
 
 // The activity feed as a terminal recording (asciicast v2, plays with asciinema).
 const cast = createWriteStream(join(OUT, "feed.cast"));
-cast.write(JSON.stringify({ version: 2, width: 110, height: 30, timestamp: Math.floor(t0 / 1000), title: "interlinked feed -f" }) + "\n");
+cast.write(JSON.stringify({ version: 2, width: 110, height: 30, timestamp: Math.floor(t0 / 1000), title: "ainterlinked feed -f" }) + "\n");
 const feed = spawn(IL, ["feed", "-f", "-n", "50"], { env, stdio: ["ignore", "pipe", "ignore"] });
 feed.stdout.on("data", (d) => cast.write(JSON.stringify([(Date.now() - t0) / 1000, d.toString().replace(/\r?\n/g, "\r\n")]) + "\n"));
 procs.push(feed);
@@ -135,11 +135,11 @@ procs.push(feed);
 // --- Claude Code ------------------------------------------------------------
 const cmd = IL.replaceAll("\\", "/");
 const mcpConfig = join(HOME, "claude-mcp.json");
-writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { interlinked: { type: "stdio", command: IL, args: ["mcp", "--harness", "claude-code"] } } }));
+writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { ainterlinked: { type: "stdio", command: IL, args: ["mcp", "--harness", "claude-code"] } } }));
 const hook = (ev, matcher) => ({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: `${cmd} hook claude-code ${ev}`, timeout: 15 }] });
 const settings = join(HOME, "claude-settings.json");
 writeFileSync(settings, JSON.stringify({
-  permissions: { allow: ["mcp__interlinked", "Read", "Edit"] },
+  permissions: { allow: ["mcp__ainterlinked", "Read", "Edit"] },
   hooks: {
     SessionStart: [hook("SessionStart")], UserPromptSubmit: [hook("UserPromptSubmit")],
     PreToolUse: [hook("PreToolUse", "Edit|Write")], PostToolUse: [hook("PostToolUse")],
@@ -147,7 +147,7 @@ writeFileSync(settings, JSON.stringify({
   },
 }));
 const claudePrompt = [
-  "You are one of two AI agents in a live demo of interlinked, a bus between AI coding agents. The other agent is Codex. Use the interlinked MCP tools. Do exactly this:",
+  "You are one of two AI agents in a live demo of ainterlinked, a bus between AI coding agents. The other agent is Codex. Use the ainterlinked MCP tools. Do exactly this:",
   "1. Call whoami.",
   "2. Call reserve_files with paths [\"cart.js\"], reason \"fixing rounding in total()\" and task 1. This also claims task 1.",
   "3. Call wait_for_messages with timeout_seconds 120 (call it again whenever it returns no messages). When a message containing PING arrives, answer it with send_message, reply_to set to its id, body: the same code with PING replaced by PONG, plus one short sentence saying you are fixing the rounding in cart.js.",
@@ -166,7 +166,7 @@ const claude = spawn(DRY ? process.execPath : claudeBin, DRY ? ["-e", "setTimeou
   "--output-format", "stream-json", "--verbose",
   "--setting-sources", "project", "--settings", settings,
   "--strict-mcp-config", "--mcp-config", mcpConfig,
-  "--allowedTools", "mcp__interlinked", "Read", "Edit",
+  "--allowedTools", "mcp__ainterlinked", "Read", "Edit",
 ], { env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
 claude.stdout.pipe(claudeLog);
 claude.stderr.on("data", (d) => claudeLog.write(d));
@@ -179,7 +179,7 @@ say(claudeReady ? `${claudeReady.agent_name} reserved cart.js and holds task #1`
 
 // --- Codex --------------------------------------------------------------------
 const codexPrompt = [
-  "You are one of two AI agents in a live demo of interlinked, a bus between AI coding agents. The other agent is Claude Code (its name starts with \"claude@\"). Use the interlinked MCP tools. Do exactly this:",
+  "You are one of two AI agents in a live demo of ainterlinked, a bus between AI coding agents. The other agent is Claude Code (its name starts with \"claude@\"). Use the ainterlinked MCP tools. Do exactly this:",
   "1. Call whoami, then list_agents to find the Claude agent's name.",
   "2. Call claim_task with id 1. It may already be taken: that is expected; note who has it.",
   `3. send_message to the Claude agent: "PING-${c}: hi, I'm Codex. I see task #1 is yours. Reply with PONG-${c}."`,
@@ -197,7 +197,7 @@ if (claudeReady) {
   say("starting Codex (its configured default model)");
   const codexLog = createWriteStream(join(OUT, "codex.jsonl"));
   codex = spawn(CODEX, ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write", "-C", PROJECT,
-    "-c", `mcp_servers.interlinked.env.INTERLINKED_HOME="${HOME.replaceAll("\\", "/")}"`, codexPrompt],
+    "-c", `mcp_servers.ainterlinked.env.AINTERLINKED_HOME="${HOME.replaceAll("\\", "/")}"`, codexPrompt],
   { env, stdio: ["ignore", "pipe", "pipe"] });
   codex.stdout.pipe(codexLog);
   codex.stderr.on("data", (d) => codexLog.write(d));
@@ -295,7 +295,7 @@ if (existsSync(join(OUT, "dashboard.webm"))) {
   results.push("recording: " + recLog.trim().split("\n").slice(-3).join(" | "));
 }
 const summary = [
-  `# interlinked cross-harness live run, ${stamp}`,
+  `# ainterlinked cross-harness live run, ${stamp}`,
   "",
   `Claude Code (haiku) and Codex on one isolated hub, project "shop", code ${c}. Total ${((Date.now() - t0) / 1000).toFixed(0)} s.`,
   "",

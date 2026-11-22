@@ -71,7 +71,7 @@ func heldIn(tx *sql.Tx, agent string) int {
 }
 
 // userTurn decides whether the agent's current turn is the user's. A
-// harness whose transcript interlinked reads (Claude Code) answers it: the
+// harness whose transcript ainterlinked reads (Claude Code) answers it: the
 // user's latest prompt must be newer than any peer-started turn and than
 // the last time the hub saw peers hold the turn open. A hook reporting
 // "the user prompted" can't change that, since an agent can run a hook

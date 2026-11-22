@@ -1,4 +1,4 @@
-// Package config holds interlinked's paths and user configuration.
+// Package config holds ainterlinked's paths and user configuration.
 package config
 
 import (
@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/romanpert/ainterlinked/internal/env"
 )
 
 // Config is the user configuration stored at <home>/config.toml.
@@ -58,14 +60,14 @@ type Locks struct {
 	TTLMinutes int    `toml:"ttl_minutes"`
 }
 
-// Covenant controls how a repo's rules (.interlinked/covenant.md) reach agents.
+// Covenant controls how a repo's rules (.ainterlinked/covenant.md) reach agents.
 type Covenant struct {
 	// Show briefs the core rules at session start and holds back an agent's
 	// first edit in an area that has rules, with those rules, once per session.
 	Show bool `toml:"show"`
 }
 
-// Server configures `interlinked serve`.
+// Server configures `ainterlinked serve`.
 type Server struct {
 	Listen string `toml:"listen"`
 }
@@ -93,18 +95,44 @@ func Default() Config {
 	}
 }
 
-// Home is the interlinked data directory ($INTERLINKED_HOME or ~/.interlinked).
+// DirName is the data directory's name inside the user's home.
+const DirName = ".ainterlinked"
+
+// LegacyDirName is the data directory from before the rename to ainterlinked.
+const LegacyDirName = ".interlinked"
+
+// Home is the data directory: $AINTERLINKED_HOME, else ~/.ainterlinked. A
+// machine that only has the old ~/.interlinked keeps using it (one hub, never
+// two side by side) until it is renamed with every session closed; doctor
+// says how.
 func Home() string {
-	if h := os.Getenv("INTERLINKED_HOME"); h != "" {
+	if h := env.Get("HOME"); h != "" {
 		return h
 	}
-	return filepath.Join(UserHome(), ".interlinked")
+	return homeIn(UserHome())
 }
 
-// UserHome is the user's home directory; INTERLINKED_USER_HOME overrides it
+func homeIn(user string) string {
+	cur := filepath.Join(user, DirName)
+	if _, err := os.Stat(cur); err == nil {
+		return cur
+	}
+	if fi, err := os.Stat(filepath.Join(user, LegacyDirName)); err == nil && fi.IsDir() {
+		return filepath.Join(user, LegacyDirName)
+	}
+	return cur
+}
+
+// LegacyHome reports whether the data directory in use is the old
+// ~/.interlinked (no AINTERLINKED_HOME and no ~/.ainterlinked yet).
+func LegacyHome() bool {
+	return env.Get("HOME") == "" && filepath.Base(Home()) == LegacyDirName
+}
+
+// UserHome is the user's home directory; AINTERLINKED_USER_HOME overrides it
 // (used by tests and by installs into a sandbox).
 func UserHome() string {
-	if h := os.Getenv("INTERLINKED_USER_HOME"); h != "" {
+	if h := env.Get("USER_HOME"); h != "" {
 		return h
 	}
 	h, err := os.UserHomeDir()
@@ -166,7 +194,7 @@ func Save(cfg Config) error {
 		return err
 	}
 	var b strings.Builder
-	b.WriteString("# interlinked configuration — https://github.com/romanpert/ainterlinked\n")
+	b.WriteString("# ainterlinked configuration — https://github.com/romanpert/ainterlinked\n")
 	b.WriteString("# One machine, one hub (" + DBPath() + ").\n\n")
 	if err := toml.NewEncoder(&b).Encode(cfg); err != nil {
 		return err

@@ -17,7 +17,7 @@ func TestEachHookProcessActsAsItsOwnAgent(t *testing.T) {
 	ctx := context.Background()
 	run := func(event string, payload map[string]any) {
 		t.Helper()
-		t.Setenv("INTERLINKED_ANCHOR_PID", "300")
+		t.Setenv("AINTERLINKED_ANCHOR_PID", "300")
 		payload["cwd"] = e.dir
 		raw, _ := json.Marshal(payload)
 		if _, err := Handle(ctx, e.cfg, hub.NewLocal(e.c.Store), "claude-code", event, ParseInput(raw)); err != nil {

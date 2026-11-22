@@ -49,7 +49,7 @@ func sandbox(t *testing.T) *Env {
 			t.Fatal(err)
 		}
 	}
-	e := NewEnv(home, `C:\Tools\interlinked.exe`)
+	e := NewEnv(home, `C:\Tools\ainterlinked.exe`)
 	e.GOOS = "windows"
 	e.LookPath = func(string) (string, error) { return "", errors.New("not found") }
 	return e
@@ -106,17 +106,17 @@ func TestInstallIdempotentAndUninstallRestores(t *testing.T) {
 	}
 	// Spot checks on content.
 	settings := read(e.path(".claude", "settings.json"))
-	if !bytes.Contains(settings, []byte(`"command": "C:/Tools/interlinked.exe hook claude-code Stop"`)) ||
-		!bytes.Contains(settings, []byte("code-review-graph update")) || !bytes.Contains(settings, []byte(`"mcp__interlinked"`)) {
+	if !bytes.Contains(settings, []byte(`"command": "C:/Tools/ainterlinked.exe hook claude-code Stop"`)) ||
+		!bytes.Contains(settings, []byte("code-review-graph update")) || !bytes.Contains(settings, []byte(`"mcp__ainterlinked"`)) {
 		t.Errorf("claude settings:\n%s", settings)
 	}
 	toml := string(read(e.path(".codex", "config.toml")))
-	if !strings.Contains(toml, "[mcp_servers.interlinked]\r\ncommand = 'C:\\Tools\\interlinked.exe'") || !strings.Contains(toml, "[mcp_servers.gitnexus]") {
+	if !strings.Contains(toml, "[mcp_servers.ainterlinked]\r\ncommand = 'C:\\Tools\\ainterlinked.exe'") || !strings.Contains(toml, "[mcp_servers.gitnexus]") {
 		t.Errorf("codex toml:\n%s", toml)
 	}
 	// Codex asks before every MCP tool call unless the server is
 	// pre-approved (codex exec with approval "never" refuses outright): the
-	// bus tools only message, plan and reserve, like mcp__interlinked in Claude.
+	// bus tools only message, plan and reserve, like mcp__ainterlinked in Claude.
 	if !strings.Contains(toml, "default_tools_approval_mode = \"approve\"") {
 		t.Errorf("codex tools not pre-approved:\n%s", toml)
 	}
@@ -126,13 +126,13 @@ func TestInstallIdempotentAndUninstallRestores(t *testing.T) {
 		t.Errorf("codex SessionEnd timeout:\n%s", codexHooksFile)
 	}
 	zedSrc := read(e.appData("Zed", "settings.json"))
-	if !bytes.Contains(zedSrc, []byte("// mine")) || !bytes.Contains(zedSrc, []byte(`"interlinked"`)) {
+	if !bytes.Contains(zedSrc, []byte("// mine")) || !bytes.Contains(zedSrc, []byte(`"ainterlinked"`)) {
 		t.Errorf("zed comments must survive:\n%s", zedSrc)
 	}
-	if !exists(e.path(".config", "opencode", "plugins", "interlinked.js")) || !exists(copilotHooksFile(e)) {
+	if !exists(e.path(".config", "opencode", "plugins", "ainterlinked.js")) || !exists(copilotHooksFile(e)) {
 		t.Error("owned files missing")
 	}
-	if plugin := read(e.path(".config", "opencode", "plugins", "interlinked.js")); !bytes.Contains(plugin, []byte(`"C:/Tools/interlinked.exe"`)) {
+	if plugin := read(e.path(".config", "opencode", "plugins", "ainterlinked.js")); !bytes.Contains(plugin, []byte(`"C:/Tools/ainterlinked.exe"`)) {
 		t.Error("plugin binary path not substituted")
 	}
 
@@ -149,11 +149,11 @@ func TestInstallIdempotentAndUninstallRestores(t *testing.T) {
 			t.Errorf("%s not restored by uninstall:\n--- got\n%s\n--- want\n%s", p, got, orig)
 		}
 	}
-	if exists(e.path(".config", "opencode", "plugins", "interlinked.js")) || exists(copilotHooksFile(e)) {
+	if exists(e.path(".config", "opencode", "plugins", "ainterlinked.js")) || exists(copilotHooksFile(e)) {
 		t.Error("owned files should be removed")
 	}
 	// Backups were made of every edited file.
-	backups, _ := filepath.Glob(filepath.Join(e.Home, ".claude", "settings.json.bak-interlinked-*"))
+	backups, _ := filepath.Glob(filepath.Join(e.Home, ".claude", "settings.json.bak-ainterlinked-*"))
 	if len(backups) == 0 {
 		t.Error("no backup of settings.json")
 	}
@@ -171,7 +171,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	if !bytes.Equal(before, read(e.path(".claude", "settings.json"))) {
 		t.Fatal("dry run wrote to disk")
 	}
-	if !strings.Contains(out.String(), "would modify") || !strings.Contains(out.String(), "interlinked.exe hook claude-code SessionStart") {
+	if !strings.Contains(out.String(), "would modify") || !strings.Contains(out.String(), "ainterlinked.exe hook claude-code SessionStart") {
 		t.Fatalf("dry run output:\n%s", out.String())
 	}
 }
@@ -221,9 +221,9 @@ func TestUserHookSharingOurGroupSurvives(t *testing.T) {
 }
 
 func TestTOMLKeepsNextTablesComment(t *testing.T) {
-	src := "a = 1\n\n[mcp_servers.interlinked]\ncommand = 'x'\n\n# my features\n[features]\nb = true\n"
-	out, ok := tomlRemoveTable(src, "mcp_servers.interlinked")
-	if !ok || !strings.Contains(out, "# my features\n[features]") || strings.Contains(out, "interlinked") {
+	src := "a = 1\n\n[mcp_servers.ainterlinked]\ncommand = 'x'\n\n# my features\n[features]\nb = true\n"
+	out, ok := tomlRemoveTable(src, "mcp_servers.ainterlinked")
+	if !ok || !strings.Contains(out, "# my features\n[features]") || strings.Contains(out, "ainterlinked") {
 		t.Fatalf("got:\n%s", out)
 	}
 }
@@ -246,11 +246,64 @@ func TestCRLFStaysCRLF(t *testing.T) {
 }
 
 func TestCommandQuoting(t *testing.T) {
-	e := &Env{Bin: `C:\Program Files\il\interlinked.exe`, GOOS: "windows"}
-	if got := e.hookCmd("cursor", "stop", true); got != "& 'C:/Program Files/il/interlinked.exe' hook cursor stop" {
+	e := &Env{Bin: `C:\Program Files\il\ainterlinked.exe`, GOOS: "windows"}
+	if got := e.hookCmd("cursor", "stop", true); got != "& 'C:/Program Files/il/ainterlinked.exe' hook cursor stop" {
 		t.Errorf("powershell: %s", got)
 	}
-	if got := e.hookCmd("claude-code", "Stop", false); got != `"C:/Program Files/il/interlinked.exe" hook claude-code Stop` {
+	if got := e.hookCmd("claude-code", "Stop", false); got != `"C:/Program Files/il/ainterlinked.exe" hook claude-code Stop` {
 		t.Errorf("sh: %s", got)
+	}
+}
+
+// A machine wired by a version from before the rename gets its old
+// "interlinked" entries replaced, not duplicated, by one install.
+func TestInstallReplacesPreRenameWiring(t *testing.T) {
+	e := sandbox(t)
+	old := map[string]string{
+		".claude.json": `{"mcpServers": {"interlinked": {"type": "stdio", "command": "C:/Old/interlinked.exe", "args": ["mcp"]}}}`,
+		".claude/settings.json": `{"permissions": {"allow": ["mcp__interlinked", "Bash(ls)"]}, "hooks": {"Stop": [{"hooks": [
+    {"type": "command", "command": "C:/Old/interlinked.exe hook claude-code Stop", "timeout": 15}]}]}}`,
+		".codex/config.toml":                      "[mcp_servers.interlinked]\ncommand = 'C:\\Old\\interlinked.exe'\n\n[features]\nb = true\n",
+		".copilot/hooks/interlinked.json":         `{"version": 1, "hooks": {}}`,
+		".config/opencode/plugins/interlinked.js": "// old plugin\n",
+		".cursor/mcp.json":                        `{"mcpServers": {"interlinked": {"command": "C:/Old/interlinked.exe"}}}`,
+	}
+	for p, c := range old {
+		full := filepath.Join(e.Home, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"claude-code", "codex", "copilot-cli", "opencode", "cursor"} {
+		if !ByID(id).Wired(e).Legacy {
+			t.Errorf("%s: old wiring not noticed", id)
+		}
+	}
+	apply(t, e, true)
+	for _, h := range All() {
+		if w := h.Wired(e); w.Legacy {
+			t.Errorf("%s still has pre-rename wiring after install: %+v", h.ID, w)
+		}
+	}
+	settings := string(read(e.path(".claude", "settings.json")))
+	if strings.Contains(settings, `"mcp__interlinked"`) || !strings.Contains(settings, `"mcp__ainterlinked"`) ||
+		strings.Contains(settings, "Old/interlinked.exe") || !strings.Contains(settings, "Bash(ls)") {
+		t.Errorf("claude settings:\n%s", settings)
+	}
+	if strings.Count(settings, "hook claude-code Stop") != 1 {
+		t.Errorf("Stop hook must be there once:\n%s", settings)
+	}
+	toml := string(read(e.path(".codex", "config.toml")))
+	if strings.Contains(toml, "[mcp_servers.interlinked]") || !strings.Contains(toml, "[mcp_servers.ainterlinked]") || !strings.Contains(toml, "[features]") {
+		t.Errorf("codex toml:\n%s", toml)
+	}
+	if exists(e.path(".copilot", "hooks", "interlinked.json")) || exists(e.path(".config", "opencode", "plugins", "interlinked.js")) {
+		t.Error("old owned files must be removed")
+	}
+	if c := string(read(e.path(".cursor", "mcp.json"))); strings.Contains(c, `"interlinked"`) {
+		t.Errorf("cursor mcp:\n%s", c)
 	}
 }

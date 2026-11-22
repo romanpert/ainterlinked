@@ -35,7 +35,7 @@ jobs:
         run: go test -race ./...
       - name: build
         shell: bash
-        run: go build -o bin/interlinked$( [ "$RUNNER_OS" = Windows ] && echo .exe ) ./cmd/interlinked
+        run: go build -o bin/ainterlinked$( [ "$RUNNER_OS" = Windows ] && echo .exe ) ./cmd/ainterlinked
       - name: end-to-end (real processes, no model calls)
         run: node scripts/e2e.mjs
       - name: wheel installs and runs
@@ -49,8 +49,8 @@ jobs:
           python packaging/pypi/build_wheels.py --version 0.0.0.dev0 --only "$t" --dist dist
           python -m venv /tmp/venv || python -m venv venv
           VENV=$( [ -d /tmp/venv ] && echo /tmp/venv || echo venv )
-          if [ "$RUNNER_OS" = Windows ]; then PY="$VENV/Scripts/python"; IL="$VENV/Scripts/interlinked"; else PY="$VENV/bin/python"; IL="$VENV/bin/interlinked"; fi
+          if [ "$RUNNER_OS" = Windows ]; then PY="$VENV/Scripts/python"; IL="$VENV/Scripts/ainterlinked"; else PY="$VENV/bin/python"; IL="$VENV/bin/ainterlinked"; fi
           "$PY" -m pip install dist/*.whl
           "$IL" version
           "$PY" -m ainterlinked version
-          INTERLINKED_HOME="$RUNNER_TEMP/ilhome" "$IL" doctor || true
+          AINTERLINKED_HOME="$RUNNER_TEMP/ilhome" "$IL" doctor || true

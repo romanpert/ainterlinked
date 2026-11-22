@@ -113,7 +113,7 @@ func TestTheHumanIsWhoeverIsOutsideEveryHarness(t *testing.T) {
 }
 
 // The whole chain of ancestors counts, not the nearest program: an agent
-// wrapping the CLI in node (or any program interlinked doesn't skip) is
+// wrapping the CLI in node (or any program ainterlinked doesn't skip) is
 // still inside its harness, and so is a process under a registered agent's
 // harness whatever that harness's executable is called.
 func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
@@ -136,7 +136,7 @@ func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
 	if _, err := dial(t, sock).Human(ctx, "box"); err == nil || !strings.Contains(err.Error(), "inside an agent's harness") {
 		t.Fatalf("the CLI wrapped in node under claude became the human: %v", err)
 	}
-	// A harness interlinked doesn't know by name, but registered: gemini
+	// A harness ainterlinked doesn't know by name, but registered: gemini
 	// runs as node (pid 5000). A process under it is that agent's.
 	set(5000, []proc.Info{{PID: 5000, PPID: 900, Name: "node"}, {PID: 900, Name: "explorer"}}, nil)
 	var gem core.Agent

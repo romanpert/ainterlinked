@@ -1,7 +1,7 @@
 // Live check with the real Codex CLI: ONE bounded `codex exec` run on the
 // real bus (spends subscription quota, so it is never part of CI).
 //
-//   node scripts/codex-live.mjs <path/to/codex.exe> [interlinked]
+//   node scripts/codex-live.mjs <path/to/codex.exe> [ainterlinked]
 //
 // 1. Codex calls whoami and waits for mail (MCP path).
 // 2. The operator sends a code word; Codex must reply with it.
@@ -16,9 +16,9 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 const CODEX = process.argv[2];
-const IL = process.argv[3] ?? "interlinked";
+const IL = process.argv[3] ?? "ainterlinked";
 if (!CODEX) {
-  console.error("usage: node scripts/codex-live.mjs <codex> [interlinked]");
+  console.error("usage: node scripts/codex-live.mjs <codex> [ainterlinked]");
   process.exit(2);
 }
 const HARD_LIMIT_MS = 6 * 60 * 1000;
@@ -38,9 +38,9 @@ const ok = (cond, what, extra = "") => {
 
 const prompt = [
   "You are testing a message bus between AI agents. Do exactly this and nothing else:",
-  "1. Call the interlinked tool whoami.",
-  "2. If a peer message has already been shown to you, skip this step; otherwise call the interlinked tool wait_for_messages with timeout_seconds 120.",
-  "3. When a message arrives, call the interlinked tool send_message with reply_to set to that message's id and a body that contains the code word the message asks for.",
+  "1. Call the ainterlinked tool whoami.",
+  "2. If a peer message has already been shown to you, skip this step; otherwise call the ainterlinked tool wait_for_messages with timeout_seconds 120.",
+  "3. When a message arrives, call the ainterlinked tool send_message with reply_to set to that message's id and a body that contains the code word the message asks for.",
   "If you are later shown more messages, answer each the same way.",
   "Do not run shell commands and do not edit files.",
 ].join("\n");
@@ -79,7 +79,7 @@ try {
     const after = il("agents", "--all").split("\n").find((l) => l.includes(name + " "));
     const hooksRan = Boolean(after && /delivery turn/.test(after));
     if (!hooksRan) {
-      console.log("NOT RUN  Stop-hook hold: Codex didn't run the interlinked hooks (approve them once with /hooks in Codex)");
+      console.log("NOT RUN  Stop-hook hold: Codex didn't run the ainterlinked hooks (approve them once with /hooks in Codex)");
     } else if (got1) {
       il("send", name, `One more: reply with the code word ${w2}.`);
       const got2 = await waitFor(() => il("inbox", "--all", "--peek").includes(w2), 1000);

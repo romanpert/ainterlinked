@@ -16,8 +16,8 @@ import (
 // handle) to separate it from process-spawn cost.
 func TestHookWorkIsCheap(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("INTERLINKED_HOME", home)
-	t.Setenv("INTERLINKED_ANCHOR_PID", "77")
+	t.Setenv("AINTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_ANCHOR_PID", "77")
 	cfg := config.Default()
 	raw, _ := json.Marshal(map[string]any{"session_id": "s", "cwd": t.TempDir(), "tool_name": "Bash", "tool_input": map[string]any{"command": "ls"}})
 	var times []time.Duration

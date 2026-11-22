@@ -30,7 +30,7 @@ type client struct {
 
 func start(t *testing.T, h *hub.Local, harness, pid, root string) *client {
 	t.Helper()
-	t.Setenv("INTERLINKED_ANCHOR_PID", pid)
+	t.Setenv("AINTERLINKED_ANCHOR_PID", pid)
 	cfg := config.Default()
 	cfg.Machine = "box"
 	srv := New(cfg, h, harness)
@@ -41,7 +41,7 @@ func start(t *testing.T, h *hub.Local, harness, pid, root string) *client {
 	go func() { _ = srv.Serve(context.Background(), inR, outW); outW.Close(); close(c.done) }()
 	res := c.call("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{"roots": map[string]any{}},
 		"clientInfo": map[string]any{"name": "test-client", "version": "1"}})
-	if res["serverInfo"].(map[string]any)["name"] != "interlinked" || res["protocolVersion"] != "2025-06-18" {
+	if res["serverInfo"].(map[string]any)["name"] != "ainterlinked" || res["protocolVersion"] != "2025-06-18" {
 		t.Fatalf("initialize: %v", res)
 	}
 	c.notify("notifications/initialized", nil)
@@ -99,7 +99,7 @@ func (c *client) tool(name string, args map[string]any) (string, bool) {
 
 func TestTwoAgentsTalkOverMCP(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("INTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_HOME", home)
 	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestTwoAgentsTalkOverMCP(t *testing.T) {
 		t.Fatalf("queue: %s", q)
 	}
 	told, _ := claude.tool("read_inbox", nil)
-	if !strings.Contains(told, "fix totals") || !strings.Contains(told, "from interlinked") {
+	if !strings.Contains(told, "fix totals") || !strings.Contains(told, "from ainterlinked") {
 		t.Fatalf("holder should be told who waits: %s", told)
 	}
 	claude.tool("release_files", nil)

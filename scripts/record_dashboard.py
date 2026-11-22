@@ -1,4 +1,4 @@
-# Records the interlinked dashboard (one headless browser page, nothing else
+# Records the ainterlinked dashboard (one headless browser page, nothing else
 # on screen) to a video, for demos. Used by scripts/cross-live.mjs.
 #
 #   python scripts/record_dashboard.py <url> <out_dir> <stop_file> [max_seconds]

@@ -100,6 +100,8 @@ func makeSecret(path string) ([]byte, error) {
 
 func agentKey(secret []byte, id string) string {
 	m := hmac.New(sha256.New, secret)
+	// The label predates the rename to ainterlinked and stays as it is:
+	// changing it would invalidate every key already handed to a session.
 	m.Write([]byte("interlinked agent key\x00" + id))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }

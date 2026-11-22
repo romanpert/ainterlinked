@@ -24,7 +24,7 @@ type env struct {
 func setup(t *testing.T) *env {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("INTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_HOME", home)
 	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func setup(t *testing.T) *env {
 // as runs a hook for a session anchored at pid.
 func (e *env) as(pid, harness, event string, payload map[string]any) (Result, map[string]any) {
 	e.t.Helper()
-	e.t.Setenv("INTERLINKED_ANCHOR_PID", pid)
+	e.t.Setenv("AINTERLINKED_ANCHOR_PID", pid)
 	if payload == nil {
 		payload = map[string]any{}
 	}

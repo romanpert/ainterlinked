@@ -38,7 +38,7 @@ func overview(ctx context.Context) error {
 		return err
 	}
 	defer c.Close()
-	fmt.Printf("interlinked %s · hub %s\n\n", Version, tilde(config.DBPath()))
+	fmt.Printf("ainterlinked %s · hub %s\n\n", Version, tilde(config.DBPath()))
 	var agents []core.Agent
 	if err := c.Call(ctx, "agents", core.AgentFilter{}, &agents); err != nil {
 		return err
@@ -56,15 +56,15 @@ func overview(ctx context.Context) error {
 	}
 	fmt.Printf("\nWired: %s\n", orNone(wired))
 	if len(found) > 0 {
-		fmt.Printf("Detected, not wired: %s  →  interlinked install\n", strings.Join(found, ", "))
+		fmt.Printf("Detected, not wired: %s  →  ainterlinked install\n", strings.Join(found, ", "))
 	}
-	fmt.Println("\nRun `interlinked help` for all commands.")
+	fmt.Println("\nRun `ainterlinked help` for all commands.")
 	return nil
 }
 
 func orNone(s []string) string {
 	if len(s) == 0 {
-		return "none yet (run: interlinked install)"
+		return "none yet (run: ainterlinked install)"
 	}
 	return strings.Join(s, ", ")
 }
@@ -99,7 +99,7 @@ func cmdSend(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(pos) < 2 && *reply == 0 {
-		return errors.New(`usage: interlinked send <to> <message...>   (to: agent name, project:<p>, harness:<h>, "*")`)
+		return errors.New(`usage: ainterlinked send <to> <message...>   (to: agent name, project:<p>, harness:<h>, "*")`)
 	}
 	c, cfg, err := openHub()
 	if err != nil {
@@ -185,7 +185,7 @@ func cmdTasks(ctx context.Context, args []string) error {
 
 func cmdTask(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: interlinked task add|claim|done|block|cancel|reopen ...")
+		return errors.New("usage: ainterlinked task add|claim|done|block|cancel|reopen ...")
 	}
 	sub, rest := args[0], args[1:]
 	c, cfg, err := openHub()
@@ -210,7 +210,7 @@ func cmdTask(ctx context.Context, args []string) error {
 			return err
 		}
 		if len(pos) == 0 {
-			return errors.New(`usage: interlinked task add "title" [--board b] [--prio n]`)
+			return errors.New(`usage: ainterlinked task add "title" [--board b] [--prio n]`)
 		}
 		if *board == "" {
 			wd, _ := os.Getwd()
@@ -246,7 +246,7 @@ func cmdTask(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return fmt.Errorf("usage: interlinked task %s <id>", sub)
+		return fmt.Errorf("usage: ainterlinked task %s <id>", sub)
 	}
 	id, err := strconv.ParseInt(strings.TrimPrefix(pos[0], "#"), 10, 64)
 	if err != nil {
@@ -368,7 +368,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	if !web.IsLoopback(*listen) {
 		return fmt.Errorf("serve listens on this machine only (e.g. 127.0.0.1:7717), not %s", *listen)
 	}
-	fmt.Printf("interlinked dashboard: http://%s\n", *listen)
+	fmt.Printf("ainterlinked dashboard: http://%s\n", *listen)
 	if local, ok := client.(*hub.Local); ok { // with a hub process, it prunes
 		go func() {
 			t := time.NewTicker(time.Hour)
@@ -397,7 +397,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		ok++
 		fmt.Printf("  ✓ %s%s\n", name, prefix(" — ", detail))
 	}
-	fmt.Printf("interlinked %s doctor\n", Version)
+	fmt.Printf("ainterlinked %s doctor\n", Version)
 	cfg, err := config.Load()
 	check("config", err, tilde(config.Path()))
 	bin, warn := stableBin()
@@ -424,6 +424,10 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	if cfg.OldHub != "" {
 		check("config", fmt.Errorf("hub = %q in %s is ignored: this machine uses its own hub (the next save drops it)", cfg.OldHub, tilde(config.Path())), "")
 	}
+	if config.LegacyHome() {
+		check("data directory", fmt.Errorf("%s is the name from before the rename; with every agent session closed, rename it to %s (nothing else changes)",
+			tilde(config.Home()), config.DirName), "")
+	}
 	_ = me
 
 	// Hook latency: a hook must be fast because it runs on every tool call.
@@ -440,23 +444,26 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	fmt.Println("harnesses")
 	for _, h := range harness.All() {
 		w := h.Wired(e)
-		if !w.MCP && !w.Hooks {
+		if !w.MCP && !w.Hooks && !w.Legacy {
 			continue
 		}
 		var herr error
 		if h.Hooks && !w.Hooks {
-			herr = errors.New("MCP wired but hooks missing — run: interlinked install " + h.ID)
+			herr = errors.New("MCP wired but hooks missing — run: ainterlinked install " + h.ID)
+		}
+		if herr == nil && w.Legacy {
+			herr = errors.New("still wired under the old name interlinked — run: ainterlinked install " + h.ID)
 		}
 		stale := false
 		for _, f := range w.Files {
-			if b, err := os.ReadFile(f); err == nil && bytes.Contains(b, []byte("interlinked")) &&
+			if b, err := os.ReadFile(f); err == nil && bytes.Contains(b, []byte("ainterlinked")) &&
 				!bytes.Contains(bytes.ReplaceAll(b, []byte(`\\`), []byte(`/`)), []byte(filepath.ToSlash(bin))) &&
 				!bytes.Contains(b, []byte(strings.ReplaceAll(bin, `\`, `\\`))) && !bytes.Contains(b, []byte(bin)) {
 				stale = true
 			}
 		}
 		if herr == nil && stale {
-			herr = errors.New("config points at a different interlinked binary — run: interlinked install " + h.ID)
+			herr = errors.New("config points at a different ainterlinked binary — run: ainterlinked install " + h.ID)
 		}
 		state := "on"
 		if !cfg.HarnessEnabled(h.ID) {

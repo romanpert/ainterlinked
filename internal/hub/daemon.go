@@ -13,10 +13,11 @@ import (
 
 	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
+	"github.com/romanpert/ainterlinked/internal/env"
 	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
-// The hub process: one per machine (per INTERLINKED_HOME), started by the
+// The hub process: one per machine (per AINTERLINKED_HOME), started by the
 // first client that finds none, and the only one that opens the database.
 // Clients (MCP servers, hooks, the CLI, the dashboard) talk to it over a
 // local socket, and it learns who each one is from the kernel (serve.go).
@@ -151,7 +152,7 @@ func OpenAuto(cfg config.Config, busy time.Duration) (Client, error) {
 	}
 	f, err := lockFile(LockPath())
 	if errors.Is(err, errLocked) {
-		return nil, errors.New("interlinked: the hub process is running but not answering; try again, or run `ainterlinked doctor`")
+		return nil, errors.New("ainterlinked: the hub process is running but not answering; try again, or run `ainterlinked doctor`")
 	}
 	if f != nil {
 		f.Close()
@@ -160,9 +161,9 @@ func OpenAuto(cfg config.Config, busy time.Duration) (Client, error) {
 }
 
 // spawnable: only the real binary starts a hub process (not a test
-// binary), and INTERLINKED_HUB_PROCESS=0 turns it off.
+// binary), and AINTERLINKED_HUB_PROCESS=0 turns it off.
 func spawnable() bool {
-	if os.Getenv("INTERLINKED_HUB_PROCESS") == "0" {
+	if env.Get("HUB_PROCESS") == "0" {
 		return false
 	}
 	exe, err := os.Executable()
@@ -170,7 +171,7 @@ func spawnable() bool {
 		return false
 	}
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(exe)), ".exe")
-	return name == "interlinked" || name == "ainterlinked"
+	return name == "ainterlinked" || name == "interlinked" // the name before the rename
 }
 
 func spawn() error {

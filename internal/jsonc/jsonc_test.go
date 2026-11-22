@@ -25,12 +25,12 @@ func TestSetPreservesCommentsAndOrder(t *testing.T) {
   },
 }
 `)
-	out, err := Set(src, []string{"context_servers", "interlinked"}, map[string]any{"command": "interlinked", "args": []string{"mcp"}})
+	out, err := Set(src, []string{"context_servers", "ainterlinked"}, map[string]any{"command": "ainterlinked", "args": []string{"mcp"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, want := range []string{"// Zed settings", "// keep me", "/* block */", `"other": { "command": "x" }`, `"interlinked": {`} {
+	for _, want := range []string{"// Zed settings", "// keep me", "/* block */", `"other": { "command": "x" }`, `"ainterlinked": {`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
@@ -40,25 +40,25 @@ func TestSetPreservesCommentsAndOrder(t *testing.T) {
 	}
 	v := mustValid(t, out)
 	cs := v["context_servers"].(map[string]any)
-	if cs["interlinked"].(map[string]any)["command"] != "interlinked" {
+	if cs["ainterlinked"].(map[string]any)["command"] != "ainterlinked" {
 		t.Fatalf("not set: %v", cs)
 	}
 	// Idempotent replace.
-	out2, err := Set(out, []string{"context_servers", "interlinked"}, map[string]any{"command": "il2"})
+	out2, err := Set(out, []string{"context_servers", "ainterlinked"}, map[string]any{"command": "il2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(out2), `"interlinked"`) != 1 || !strings.Contains(string(out2), "il2") {
+	if strings.Count(string(out2), `"ainterlinked"`) != 1 || !strings.Contains(string(out2), "il2") {
 		t.Fatalf("replace failed:\n%s", out2)
 	}
 	mustValid(t, out2)
 	// Delete restores the original servers.
-	out3, ok, err := Delete(out2, []string{"context_servers", "interlinked"})
+	out3, ok, err := Delete(out2, []string{"context_servers", "ainterlinked"})
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	v3 := mustValid(t, out3)
-	if _, has := v3["context_servers"].(map[string]any)["interlinked"]; has {
+	if _, has := v3["context_servers"].(map[string]any)["ainterlinked"]; has {
 		t.Fatal("not deleted")
 	}
 	if !strings.Contains(string(out3), "// keep me") {
@@ -68,12 +68,12 @@ func TestSetPreservesCommentsAndOrder(t *testing.T) {
 
 func TestSetCreatesPathsAndEmptyFiles(t *testing.T) {
 	for _, src := range []string{"", "{}", "{\n}\n", `{"a":1}`} {
-		out, err := Set([]byte(src), []string{"mcpServers", "interlinked"}, map[string]any{"command": "il"})
+		out, err := Set([]byte(src), []string{"mcpServers", "ainterlinked"}, map[string]any{"command": "il"})
 		if err != nil {
 			t.Fatalf("%q: %v", src, err)
 		}
 		v := mustValid(t, out)
-		if v["mcpServers"].(map[string]any)["interlinked"].(map[string]any)["command"] != "il" {
+		if v["mcpServers"].(map[string]any)["ainterlinked"].(map[string]any)["command"] != "il" {
 			t.Fatalf("%q -> %s", src, out)
 		}
 		if src == `{"a":1}` && v["a"].(float64) != 1 {
@@ -90,7 +90,7 @@ func TestAppendAndRemoveIf(t *testing.T) {
     ]
   }
 }`)
-	entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "interlinked hook claude-code Stop"}}}
+	entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "ainterlinked hook claude-code Stop"}}}
 	out, err := Append(src, []string{"hooks", "Stop"}, entry)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestAppendAndRemoveIf(t *testing.T) {
 	if n := len(v["hooks"].(map[string]any)["Stop"].([]any)); n != 2 {
 		t.Fatalf("want 2 Stop entries, got %d\n%s", n, out)
 	}
-	pred := func(raw []byte) bool { return strings.Contains(string(raw), "interlinked hook") }
+	pred := func(raw []byte) bool { return strings.Contains(string(raw), "ainterlinked hook") }
 	out, n, err := RemoveIf(out, []string{"hooks", "Stop"}, pred)
 	if err != nil || n != 1 {
 		t.Fatal(n, err)
@@ -136,13 +136,13 @@ func TestInlineObject(t *testing.T) {
 func TestDeleteKeepsNeighbourComments(t *testing.T) {
 	src := []byte(`{
   "servers": {
-    "interlinked": { "command": "il" },
+    "ainterlinked": { "command": "il" },
     // my github server
     "github": { "url": "x" }, // keep this note
     "last": 1
   }
 }`)
-	out, ok, err := Delete(src, []string{"servers", "interlinked"})
+	out, ok, err := Delete(src, []string{"servers", "ainterlinked"})
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}

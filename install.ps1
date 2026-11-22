@@ -1,21 +1,21 @@
-# interlinked installer for Windows (PowerShell 5.1+).
+# ainterlinked installer for Windows (PowerShell 5.1+).
 #   irm https://raw.githubusercontent.com/romanpert/ainterlinked/main/install.ps1 | iex
-# Downloads the release binary to %LOCALAPPDATA%\Programs\interlinked, verifies
+# Downloads the release binary to %LOCALAPPDATA%\Programs\ainterlinked, verifies
 # its checksum, adds it to your user PATH, then wires every detected AI harness.
-# Set $env:INTERLINKED_NO_WIRE = '1' to only install the binary.
+# Set $env:AINTERLINKED_NO_WIRE = '1' to only install the binary.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = 'romanpert/ainterlinked'
-$version = if ($env:INTERLINKED_VERSION) { $env:INTERLINKED_VERSION } else { 'latest' }
+$version = if ($env:AINTERLINKED_VERSION) { $env:AINTERLINKED_VERSION } else { 'latest' }
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-$asset = "interlinked-windows-$arch.exe"
+$asset = "ainterlinked-windows-$arch.exe"
 $base = if ($version -eq 'latest') { "https://github.com/$repo/releases/latest/download" } else { "https://github.com/$repo/releases/download/$version" }
 
-$dir = Join-Path $env:LOCALAPPDATA 'Programs\interlinked'
+$dir = Join-Path $env:LOCALAPPDATA 'Programs\ainterlinked'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$exe = Join-Path $dir 'interlinked.exe'
-$tmp = Join-Path ([IO.Path]::GetTempPath()) ("interlinked-" + [guid]::NewGuid() + '.exe')
+$exe = Join-Path $dir 'ainterlinked.exe'
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("ainterlinked-" + [guid]::NewGuid() + '.exe')
 
 Write-Host "Downloading $asset ($version)..."
 Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile $tmp
@@ -26,9 +26,7 @@ $want = if ($line) { ($line -split '\s+')[0].ToLower() } else { '' }
 $got = (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower()
 if (-not $want -or $want -ne $got) { Remove-Item $tmp -Force; throw "checksum mismatch for $asset - aborting" }
 Move-Item -Force $tmp $exe
-# The project's name runs the same program, without a second copy of it.
-Set-Content -Encoding ascii -Path (Join-Path $dir 'ainterlinked.cmd') -Value '@"%~dp0interlinked.exe" %*'
-Write-Host "Installed $exe (also as ainterlinked)"
+Write-Host "Installed $exe"
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not (($userPath -split ';') -contains $dir)) {
@@ -37,4 +35,4 @@ if (-not (($userPath -split ';') -contains $dir)) {
     Write-Host "Added $dir to your user PATH (new terminals pick it up)."
 }
 
-if ($env:INTERLINKED_NO_WIRE -ne '1') { & $exe install }
+if ($env:AINTERLINKED_NO_WIRE -ne '1') { & $exe install }

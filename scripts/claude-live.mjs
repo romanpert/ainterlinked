@@ -1,31 +1,31 @@
 // Live test against a real Claude Code (uses your Claude plan's model usage:
 // one short Haiku session, capped turns). Fully isolated: a temporary
-// INTERLINKED_HOME, --strict-mcp-config and --setting-sources project, so your
+// AINTERLINKED_HOME, --strict-mcp-config and --setting-sources project, so your
 // own MCP servers, hooks and config files are not loaded or touched.
 //
-// A peer agent (a real `interlinked mcp --harness codex` process) asks Claude
+// A peer agent (a real `ainterlinked mcp --harness codex` process) asks Claude
 // for PINEAPPLE; when that arrives it immediately asks for MANGO, which can
 // only reach Claude through the Stop hook holding the session open.
 //
-//   node scripts/claude-live.mjs [path/to/interlinked]
+//   node scripts/claude-live.mjs [path/to/ainterlinked]
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
-const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/interlinked.exe" : "bin/interlinked"));
+const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/ainterlinked.exe" : "bin/ainterlinked"));
 const HOME = mkdtempSync(join(tmpdir(), "il-live-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "demo-"));
-const env = { ...process.env, INTERLINKED_HOME: HOME };
+const env = { ...process.env, AINTERLINKED_HOME: HOME };
 const cmd = BIN.replaceAll("\\", "/");
 
 const mcpConfig = join(HOME, "mcp.json");
-writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { interlinked: { type: "stdio", command: BIN, args: ["mcp", "--harness", "claude-code"] } } }));
+writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { ainterlinked: { type: "stdio", command: BIN, args: ["mcp", "--harness", "claude-code"] } } }));
 const hook = (ev, matcher) => ({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: `${cmd} hook claude-code ${ev}`, timeout: 15 }] });
 const settings = join(HOME, "settings.json");
 writeFileSync(settings, JSON.stringify({
-  permissions: { allow: ["mcp__interlinked"] },
+  permissions: { allow: ["mcp__ainterlinked"] },
   hooks: {
     SessionStart: [hook("SessionStart")], UserPromptSubmit: [hook("UserPromptSubmit")],
     PreToolUse: [hook("PreToolUse", "Edit|Write")], PostToolUse: [hook("PostToolUse")],
@@ -86,11 +86,11 @@ const claudeBin = process.platform === "win32"
   ? execFileSync("where.exe", ["claude"], { encoding: "utf8" }).split(/\r?\n/).find((l) => l.toLowerCase().endsWith(".exe"))
   : "claude";
 const claude = spawn(claudeBin, [
-  "-p", "You are connected to interlinked, a bus shared with other AI agents. Do what your peer agents ask you in their messages, then finish.",
+  "-p", "You are connected to ainterlinked, a bus shared with other AI agents. Do what your peer agents ask you in their messages, then finish.",
   "--model", "haiku", "--max-turns", "12",
   "--setting-sources", "project", "--settings", settings,
   "--strict-mcp-config", "--mcp-config", mcpConfig,
-  "--allowedTools", "mcp__interlinked",
+  "--allowedTools", "mcp__ainterlinked",
 ], { env, cwd: PROJECT, stdio: ["ignore", "pipe", "pipe"] });
 let out = "";
 claude.stdout.on("data", (d) => (out += d));

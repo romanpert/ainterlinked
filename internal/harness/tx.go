@@ -192,7 +192,7 @@ func (t *Tx) Commit() ([]Change, error) {
 		}
 		ch := Change{Path: p.e.path}
 		if p.exists {
-			ch.Backup = p.path + ".bak-interlinked-" + t.stamp
+			ch.Backup = p.path + ".bak-ainterlinked-" + t.stamp
 			if err := os.WriteFile(ch.Backup, p.old, 0o600); err != nil {
 				return rollback(fmt.Errorf("backup %s: %w", p.e.path, err))
 			}
@@ -244,7 +244,7 @@ func atomicWrite(path string, data []byte) error {
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".interlinked-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".ainterlinked-*")
 	if err != nil {
 		return err
 	}

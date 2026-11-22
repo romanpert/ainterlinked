@@ -2,12 +2,13 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSaveLoad(t *testing.T) {
-	t.Setenv("INTERLINKED_HOME", t.TempDir())
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
 	cfg := Default()
 	cfg.Harnesses["codex"] = HarnessCfg{Enabled: false}
 	if err := Save(cfg); err != nil {
@@ -22,7 +23,7 @@ func TestSaveLoad(t *testing.T) {
 // A hub URL (and token) from a version that joined other machines is
 // noticed, not used, and gone after the next save.
 func TestOldRemoteHubIsIgnored(t *testing.T) {
-	t.Setenv("INTERLINKED_HOME", t.TempDir())
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
 	if err := os.WriteFile(Path(), []byte("hub = \"http://elsewhere:7717\"\ntoken = \"secret\"\nmachine = \"box\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestOldRemoteHubIsIgnored(t *testing.T) {
 }
 
 func TestBrokenConfigIsAnError(t *testing.T) {
-	t.Setenv("INTERLINKED_HOME", t.TempDir())
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
 	if err := os.WriteFile(Path(), []byte("hub = \n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -61,5 +62,28 @@ func TestCopilotHooksFollowBothHarnesses(t *testing.T) {
 	c.Harnesses["vscode"] = HarnessCfg{Enabled: false}
 	if c.HarnessEnabled("copilot") {
 		t.Fatal("both muted → shared hooks muted")
+	}
+}
+
+// A machine that only has the pre-rename ~/.interlinked keeps its one hub
+// there; a fresh machine, or one already renamed, uses ~/.ainterlinked.
+func TestHomeFollowsTheExistingDirectory(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("AINTERLINKED_HOME", "")
+	t.Setenv("AINTERLINKED_USER_HOME", user)
+	if got := Home(); got != filepath.Join(user, ".ainterlinked") || LegacyHome() {
+		t.Fatalf("fresh: %s legacy=%v", got, LegacyHome())
+	}
+	if err := os.Mkdir(filepath.Join(user, ".interlinked"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := Home(); got != filepath.Join(user, ".interlinked") || !LegacyHome() {
+		t.Fatalf("legacy only: %s legacy=%v", got, LegacyHome())
+	}
+	if err := os.Mkdir(filepath.Join(user, ".ainterlinked"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := Home(); got != filepath.Join(user, ".ainterlinked") || LegacyHome() {
+		t.Fatalf("renamed: %s legacy=%v", got, LegacyHome())
 	}
 }

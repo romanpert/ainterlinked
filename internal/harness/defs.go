@@ -49,7 +49,7 @@ func claudeCode() *Harness {
 	}
 	return &Harness{
 		ID: "claude-code", Name: "Claude Code", Tier: "turn", Hooks: true,
-		Notes: "Push into idle sessions: start Claude with `interlinked launch claude` (enables the claude/channel push).",
+		Notes: "Push into idle sessions: start Claude with `ainterlinked launch claude` (enables the claude/channel push).",
 		detect: func(e *Env) []string {
 			return evidence(e, []string{"claude"}, e.path(".claude"), userJSON(e))
 		},
@@ -58,8 +58,11 @@ func claudeCode() *Harness {
 			// official CLI (it owns that file) and fall back to a careful edit.
 			if claude, err := e.LookPath("claude"); err == nil {
 				raw, _ := jsonMarshal(entry(e))
-				t.RunOptional("claude mcp remove (refresh)", claude, "mcp", "remove", "--scope", "user", "interlinked")
-				t.Run("claude mcp add-json --scope user interlinked", claude, "mcp", "add-json", "--scope", "user", "interlinked", raw)
+				if jsonHas(userJSON(e), "mcpServers", legacyServer) {
+					t.RunOptional("claude mcp remove --scope user "+legacyServer, claude, "mcp", "remove", "--scope", "user", legacyServer)
+				}
+				t.RunOptional("claude mcp remove (refresh)", claude, "mcp", "remove", "--scope", "user", Server)
+				t.Run("claude mcp add-json --scope user "+Server, claude, "mcp", "add-json", "--scope", "user", Server, raw)
 			} else {
 				jsonServer(t, userJSON(e), []string{"mcpServers"}, entry(e))
 			}
@@ -68,13 +71,20 @@ func claudeCode() *Harness {
 				if err != nil {
 					return nil, err
 				}
+				if out, err = removeFromList(out, []string{"permissions", "allow"}, "mcp__"+legacyServer); err != nil {
+					return nil, err
+				}
 				// Let the model use the bus without a permission prompt per call.
-				return addToList(out, []string{"permissions", "allow"}, "mcp__interlinked")
+				return addToList(out, []string{"permissions", "allow"}, "mcp__"+Server)
 			})
 		},
 		uninstall: func(e *Env, t *Tx) {
-			if claude, err := e.LookPath("claude"); err == nil && jsonHas(userJSON(e), "mcpServers", "interlinked") {
-				t.Run("claude mcp remove --scope user interlinked", claude, "mcp", "remove", "--scope", "user", "interlinked")
+			if claude, err := e.LookPath("claude"); err == nil {
+				for _, name := range []string{Server, legacyServer} {
+					if jsonHas(userJSON(e), "mcpServers", name) {
+						t.Run("claude mcp remove --scope user "+name, claude, "mcp", "remove", "--scope", "user", name)
+					}
+				}
 			} else {
 				jsonServerRemove(t, userJSON(e), []string{"mcpServers"})
 			}
@@ -83,11 +93,15 @@ func claudeCode() *Harness {
 				if err != nil {
 					return nil, err
 				}
-				return removeFromList(out, []string{"permissions", "allow"}, "mcp__interlinked")
+				if out, err = removeFromList(out, []string{"permissions", "allow"}, "mcp__"+legacyServer); err != nil {
+					return nil, err
+				}
+				return removeFromList(out, []string{"permissions", "allow"}, "mcp__"+Server)
 			})
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(userJSON(e), "mcpServers", "interlinked"), Hooks: hasOurHooks(read(settings(e))),
+			mcp, legacy := jsonWiring(userJSON(e), "mcpServers")
+			return Wiring{MCP: mcp, Legacy: legacy, Hooks: hasOurHooks(read(settings(e))),
 				Files: []string{userJSON(e), settings(e)}}
 		},
 	}
@@ -112,16 +126,17 @@ func codex() *Harness {
 	block := func(e *Env) string {
 		// default_tools_approval_mode: without it Codex asks before every
 		// bus call (and `codex exec` refuses them). The tools only message,
-		// plan and reserve files, the same trust mcp__interlinked gets in Claude.
+		// plan and reserve files, the same trust mcp__ainterlinked gets in Claude.
 		return fmt.Sprintf("command = %s\nargs = [\"mcp\", \"--harness\", \"codex\"]\nstartup_timeout_sec = 20\ntool_timeout_sec = 660\ndefault_tools_approval_mode = \"approve\"\n", tomlString(e.Bin))
 	}
 	return &Harness{
 		ID: "codex", Name: "OpenAI Codex", Tier: "turn", Hooks: true,
-		Notes:  "Codex skips new hooks until you trust them: open Codex and run /hooks to approve the interlinked hooks.",
+		Notes:  "Codex skips new hooks until you trust them: open Codex and run /hooks to approve the ainterlinked hooks.",
 		detect: func(e *Env) []string { return evidence(e, []string{"codex"}, codexHome(e)) },
 		install: func(e *Env, t *Tx) {
 			t.EditTOML(cfg(e), func(old []byte) ([]byte, error) {
-				return []byte(tomlSetTable(string(old), "mcp_servers.interlinked", block(e))), nil
+				src, _ := tomlRemoveTable(string(old), "mcp_servers."+legacyServer)
+				return []byte(tomlSetTable(src, "mcp_servers."+Server, block(e))), nil
 			})
 			t.EditJSON(hooks(e), func(old []byte) ([]byte, error) {
 				return setClaudeStyleHooks(old, e, "codex", codexHooks, 15, false)
@@ -129,7 +144,8 @@ func codex() *Harness {
 		},
 		uninstall: func(e *Env, t *Tx) {
 			t.EditTOML(cfg(e), func(old []byte) ([]byte, error) {
-				out, _ := tomlRemoveTable(string(old), "mcp_servers.interlinked")
+				out, _ := tomlRemoveTable(string(old), "mcp_servers."+Server)
+				out, _ = tomlRemoveTable(out, "mcp_servers."+legacyServer)
 				return []byte(out), nil
 			})
 			if exists(hooks(e)) {
@@ -137,19 +153,35 @@ func codex() *Harness {
 			}
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: tomlHasTable(string(read(cfg(e))), "mcp_servers.interlinked"), Hooks: hasOurHooks(read(hooks(e))),
-				Files: []string{cfg(e), hooks(e)}}
+			src := string(read(cfg(e)))
+			return Wiring{MCP: tomlHasTable(src, "mcp_servers."+Server), Legacy: tomlHasTable(src, "mcp_servers."+legacyServer),
+				Hooks: hasOurHooks(read(hooks(e))), Files: []string{cfg(e), hooks(e)}}
 		},
 	}
 }
 
 // ---------------------------------------------------------------- Copilot
 
-// copilotHookEvents are wired in ~/.copilot/hooks/interlinked.json, which
+// copilotHookEvents are wired in ~/.copilot/hooks/ainterlinked.json, which
 // both the Copilot CLI and VS Code agent hooks read.
 var copilotHookEvents = []string{"sessionStart", "userPromptSubmitted", "preToolUse", "postToolUse", "agentStop", "sessionEnd"}
 
-func copilotHooksFile(e *Env) string { return e.path(".copilot", "hooks", "interlinked.json") }
+func copilotHooksFile(e *Env) string { return e.path(".copilot", "hooks", Server+".json") }
+
+// copilotLegacyHooksFile is where versions before the rename wrote them.
+func copilotLegacyHooksFile(e *Env) string { return e.path(".copilot", "hooks", legacyServer+".json") }
+
+// writeCopilotHooks writes the shared hooks file and drops the old one.
+func writeCopilotHooks(e *Env, t *Tx) {
+	t.Write(copilotHooksFile(e), copilotHooks(e))
+	t.Remove(copilotLegacyHooksFile(e))
+}
+
+// removeCopilotHooks removes the shared hooks file, under either name.
+func removeCopilotHooks(e *Env, t *Tx) {
+	t.Remove(copilotHooksFile(e))
+	t.Remove(copilotLegacyHooksFile(e))
+}
 
 func copilotHooks(e *Env) []byte {
 	hooks := map[string]any{}
@@ -173,16 +205,17 @@ func copilotCLI() *Harness {
 		install: func(e *Env, t *Tx) {
 			jsonServer(t, mcp(e), []string{"mcpServers"}, map[string]any{
 				"type": "local", "command": e.Bin, "args": mcpArgs("copilot-cli"), "tools": []string{"*"}})
-			t.Write(copilotHooksFile(e), copilotHooks(e))
+			writeCopilotHooks(e, t)
 		},
 		uninstall: func(e *Env, t *Tx) {
 			jsonServerRemove(t, mcp(e), []string{"mcpServers"})
 			if !ByID("vscode").Wired(e).MCP { // VS Code agent hooks share this file
-				t.Remove(copilotHooksFile(e))
+				removeCopilotHooks(e, t)
 			}
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(mcp(e), "mcpServers", "interlinked"), Hooks: exists(copilotHooksFile(e)),
+			on, legacy := jsonWiring(mcp(e), "mcpServers")
+			return Wiring{MCP: on, Legacy: legacy || exists(copilotLegacyHooksFile(e)), Hooks: exists(copilotHooksFile(e)),
 				Files: []string{mcp(e), copilotHooksFile(e)}}
 		},
 	}
@@ -211,22 +244,23 @@ func vscode() *Harness {
 						"type": "stdio", "command": e.Bin, "args": mcpArgs("vscode")})
 				}
 			}
-			t.Write(copilotHooksFile(e), copilotHooks(e))
+			writeCopilotHooks(e, t)
 		},
 		uninstall: func(e *Env, t *Tx) {
 			for _, d := range dirs(e) {
 				jsonServerRemove(t, filepath.Join(d, "mcp.json"), []string{"servers"})
 			}
 			if !ByID("copilot-cli").Wired(e).MCP {
-				t.Remove(copilotHooksFile(e))
+				removeCopilotHooks(e, t)
 			}
 		},
 		wired: func(e *Env) Wiring {
-			w := Wiring{Hooks: exists(copilotHooksFile(e))}
+			w := Wiring{Hooks: exists(copilotHooksFile(e)), Legacy: exists(copilotLegacyHooksFile(e))}
 			for _, d := range dirs(e) {
 				f := filepath.Join(d, "mcp.json")
 				w.Files = append(w.Files, f)
-				w.MCP = w.MCP || jsonHas(f, "servers", "interlinked")
+				on, legacy := jsonWiring(f, "servers")
+				w.MCP, w.Legacy = w.MCP || on, w.Legacy || legacy
 			}
 			return w
 		},
@@ -288,7 +322,8 @@ func cursor() *Harness {
 			})
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(mcp(e), "mcpServers", "interlinked"), Hooks: hasOurHooks(read(hooks(e))), Files: []string{mcp(e), hooks(e)}}
+			on, legacy := jsonWiring(mcp(e), "mcpServers")
+			return Wiring{MCP: on, Legacy: legacy, Hooks: hasOurHooks(read(hooks(e))), Files: []string{mcp(e), hooks(e)}}
 		},
 	}
 }
@@ -311,9 +346,12 @@ func gemini() *Harness {
 		detect: func(e *Env) []string { return evidence(e, []string{"gemini"}, e.path(".gemini")) },
 		install: func(e *Env, t *Tx) {
 			t.EditJSON(settings(e), func(old []byte) ([]byte, error) {
-				out, err := jsonc.Set(old, []string{"mcpServers", "interlinked"}, map[string]any{
+				out, err := jsonc.Set(old, []string{"mcpServers", Server}, map[string]any{
 					"command": e.Bin, "args": mcpArgs("gemini"), "trust": true, "timeout": 660000})
 				if err != nil {
+					return nil, err
+				}
+				if out, _, err = jsonc.Delete(out, []string{"mcpServers", legacyServer}); err != nil {
 					return nil, err
 				}
 				return setClaudeStyleHooks(out, e, "gemini", geminiHooks, 15000, false) // ms
@@ -324,15 +362,19 @@ func gemini() *Harness {
 				return
 			}
 			t.EditJSON(settings(e), func(old []byte) ([]byte, error) {
-				out, _, err := jsonc.Delete(old, []string{"mcpServers", "interlinked"})
+				out, _, err := jsonc.Delete(old, []string{"mcpServers", Server})
 				if err != nil {
+					return nil, err
+				}
+				if out, _, err = jsonc.Delete(out, []string{"mcpServers", legacyServer}); err != nil {
 					return nil, err
 				}
 				return removeClaudeStyleHooks(out, geminiHooks)
 			})
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(settings(e), "mcpServers", "interlinked"), Hooks: hasOurHooks(read(settings(e))), Files: []string{settings(e)}}
+			on, legacy := jsonWiring(settings(e), "mcpServers")
+			return Wiring{MCP: on, Legacy: legacy, Hooks: hasOurHooks(read(settings(e))), Files: []string{settings(e)}}
 		},
 	}
 }
@@ -355,9 +397,12 @@ func qwen() *Harness {
 		detect: func(e *Env) []string { return evidence(e, []string{"qwen"}, e.path(".qwen")) },
 		install: func(e *Env, t *Tx) {
 			t.EditJSON(settings(e), func(old []byte) ([]byte, error) {
-				out, err := jsonc.Set(old, []string{"mcpServers", "interlinked"}, map[string]any{
+				out, err := jsonc.Set(old, []string{"mcpServers", Server}, map[string]any{
 					"command": e.Bin, "args": mcpArgs("qwen"), "trust": true})
 				if err != nil {
+					return nil, err
+				}
+				if out, _, err = jsonc.Delete(out, []string{"mcpServers", legacyServer}); err != nil {
 					return nil, err
 				}
 				return setClaudeStyleHooks(out, e, "qwen", qwenHooks, nil, false)
@@ -368,15 +413,19 @@ func qwen() *Harness {
 				return
 			}
 			t.EditJSON(settings(e), func(old []byte) ([]byte, error) {
-				out, _, err := jsonc.Delete(old, []string{"mcpServers", "interlinked"})
+				out, _, err := jsonc.Delete(old, []string{"mcpServers", Server})
 				if err != nil {
+					return nil, err
+				}
+				if out, _, err = jsonc.Delete(out, []string{"mcpServers", legacyServer}); err != nil {
 					return nil, err
 				}
 				return removeClaudeStyleHooks(out, qwenHooks)
 			})
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(settings(e), "mcpServers", "interlinked"), Hooks: hasOurHooks(read(settings(e))), Files: []string{settings(e)}}
+			on, legacy := jsonWiring(settings(e), "mcpServers")
+			return Wiring{MCP: on, Legacy: legacy, Hooks: hasOurHooks(read(settings(e))), Files: []string{settings(e)}}
 		},
 	}
 }
@@ -391,7 +440,8 @@ func opencode() *Harness {
 		}
 		return filepath.Join(dir(e), "opencode.json")
 	}
-	plugin := func(e *Env) string { return filepath.Join(dir(e), "plugins", "interlinked.js") }
+	plugin := func(e *Env) string { return filepath.Join(dir(e), "plugins", Server+".js") }
+	oldPlugin := func(e *Env) string { return filepath.Join(dir(e), "plugins", legacyServer+".js") }
 	return &Harness{
 		ID: "opencode", Name: "OpenCode", Tier: "push", Hooks: true,
 		Notes:  "The OpenCode plugin wakes idle sessions when a message arrives (push).",
@@ -401,17 +451,25 @@ func opencode() *Harness {
 				if len(strings.TrimSpace(string(old))) == 0 {
 					old = []byte("{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n")
 				}
-				return jsonc.Set(old, []string{"mcp", "interlinked"}, map[string]any{
+				out, err := jsonc.Set(old, []string{"mcp", Server}, map[string]any{
 					"type": "local", "command": append([]string{e.Bin}, mcpArgs("opencode")...), "enabled": true})
+				if err != nil {
+					return nil, err
+				}
+				out, _, err = jsonc.Delete(out, []string{"mcp", legacyServer})
+				return out, err
 			})
-			t.Write(plugin(e), []byte(strings.ReplaceAll(opencodePlugin, "__INTERLINKED_BIN__", e.binSlash())))
+			t.Write(plugin(e), []byte(strings.ReplaceAll(opencodePlugin, "__AINTERLINKED_BIN__", e.binSlash())))
+			t.Remove(oldPlugin(e))
 		},
 		uninstall: func(e *Env, t *Tx) {
 			jsonServerRemove(t, cfg(e), []string{"mcp"})
 			t.Remove(plugin(e))
+			t.Remove(oldPlugin(e))
 		},
 		wired: func(e *Env) Wiring {
-			return Wiring{MCP: jsonHas(cfg(e), "mcp", "interlinked"), Hooks: exists(plugin(e)), Files: []string{cfg(e), plugin(e)}}
+			on, legacy := jsonWiring(cfg(e), "mcp")
+			return Wiring{MCP: on, Legacy: legacy || exists(oldPlugin(e)), Hooks: exists(plugin(e)), Files: []string{cfg(e), plugin(e)}}
 		},
 	}
 }
@@ -444,7 +502,8 @@ func mcpOnly(id, name string, file func(e *Env) []string, key []string, entry fu
 			w := Wiring{}
 			for _, f := range file(e) {
 				w.Files = append(w.Files, f)
-				w.MCP = w.MCP || jsonHas(f, append(append([]string{}, key...), "interlinked")...)
+				on, legacy := jsonWiring(f, key...)
+				w.MCP, w.Legacy = w.MCP || on, w.Legacy || legacy
 			}
 			return w
 		},

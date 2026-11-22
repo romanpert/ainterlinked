@@ -101,11 +101,11 @@ func covenantNotice(cfg config.Config, agent, project string, files []string, he
 		logShown(agent, project, cov.Hash, "held", areas)
 		// Say plainly that nothing was applied: a model told only "held back"
 		// may wait for a result that never comes.
-		return "interlinked: edit NOT applied. This repo's covenant (" + covenant.File + ") has rules for this file; read them first (shown once):" +
+		return "ainterlinked: edit NOT applied. This repo's covenant (" + covenant.File + ") has rules for this file; read them first (shown once):" +
 			b.String() + "\nIf your edit complies, run the same edit again now."
 	}
 	logShown(agent, project, cov.Hash, "context", areas)
-	return "[interlinked] Covenant rules (" + covenant.File + ") for what you're working on:" + b.String()
+	return "[ainterlinked] Covenant rules (" + covenant.File + ") for what you're working on:" + b.String()
 }
 
 // logShown appends one line per delivery to <home>/covenant.log: which

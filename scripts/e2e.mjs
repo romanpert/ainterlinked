@@ -1,21 +1,21 @@
 // End-to-end smoke test with real processes. Node plays two harnesses: each
-// spawns `interlinked mcp` (like a harness starts its MCP server) and runs
+// spawns `ainterlinked mcp` (like a harness starts its MCP server) and runs
 // hooks through a shell (like Claude Code does), so the real process-tree
 // anchoring, the SQLite hub shared between processes, the CLI and the HTTP
 // server are all exercised. No model or paid API is involved.
 //
-//   node scripts/e2e.mjs [path/to/interlinked]
+//   node scripts/e2e.mjs [path/to/ainterlinked]
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
-const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/interlinked.exe" : "bin/interlinked"));
+const BIN = resolve(process.argv[2] ?? (process.platform === "win32" ? "bin/ainterlinked.exe" : "bin/ainterlinked"));
 const HOME = mkdtempSync(join(tmpdir(), "il-e2e-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "il-proj-"));
-const env = { ...process.env, INTERLINKED_HOME: HOME };
-delete env.INTERLINKED_ANCHOR_PID;
+const env = { ...process.env, AINTERLINKED_HOME: HOME };
+delete env.AINTERLINKED_ANCHOR_PID;
 let failures = 0;
 const ok = (cond, what, extra = "") => {
   console.log(`${cond ? "PASS" : "FAIL"}  ${what}${extra ? "  — " + extra : ""}`);
@@ -96,7 +96,7 @@ const killTree = (p) => (process.platform === "win32" ? spawnSync("taskkill", ["
 try {
   const a = new MCP("claude-code");
   const init = await a.init();
-  ok(init.serverInfo.name === "interlinked", "MCP initialize");
+  ok(init.serverInfo.name === "ainterlinked", "MCP initialize");
   const who = await a.tool("whoami");
   ok(/You are claude@il-proj-/.test(who.text), "agent A registered from the real cwd", who.text.split("\n")[0]);
 
@@ -130,7 +130,7 @@ try {
   ok(cli("inbox").stdout.includes("done rebasing"), "agent reaches the human inbox");
   // Identity comes from the kernel: the CLI inside an agent's harness is that
   // agent, and can't read or act as the human.
-  if (env.INTERLINKED_HUB_PROCESS !== "0") {
+  if (env.AINTERLINKED_HUB_PROCESS !== "0") {
     const status = cli("hub", "status").stdout;
     ok(status.includes("the human operator"), "hub process knows the terminal is the human", status.split("\n")[1] || status);
     const asAgent = agentCli("inbox");
@@ -173,7 +173,7 @@ try {
   const base = median(() => { const t0 = Date.now(); spawnSync(shell, ["-c", "true"]); return Date.now() - t0; });
   const hookMs = median(() => hook("claude-code", "PostToolUse", { session_id: "sess-A", tool_name: "Read" }).ms);
   // Informational: a freshly built, unsigned binary can pay antivirus scans
-  // on every spawn. interlinked's own work is guarded in-process by
+  // on every spawn. ainterlinked's own work is guarded in-process by
   // internal/hooks/timing_test.go; here we only fail on a real hang.
   // The ceiling scales with how slow spawning is right now: on a box running
   // dozens of agent sessions a bare shell alone can take ~1 s.

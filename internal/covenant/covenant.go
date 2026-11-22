@@ -1,5 +1,5 @@
 // Package covenant reads a repo's covenant: the few rules its owner sets for
-// the agents working in it, kept in .interlinked/covenant.md and versioned
+// the agents working in it, kept in .ainterlinked/covenant.md and versioned
 // with the code (amending it is a commit the owner accepts).
 //
 // Rules are attached to the paths they govern, like covenants that run with
@@ -30,7 +30,11 @@ import (
 )
 
 // File is where a project keeps its covenant, relative to its root.
-const File = ".interlinked/covenant.md"
+const File = ".ainterlinked/covenant.md"
+
+// LegacyFile is where it was kept before the rename; it is still read when
+// File doesn't exist.
+const LegacyFile = ".interlinked/covenant.md"
 
 // Limits keep the covenant small: rule space is a commons too, and an
 // oversized covenant is clipped where it's shown rather than flooding contexts.
@@ -69,6 +73,9 @@ func Load(root string) (*Covenant, error) {
 		return nil, nil
 	}
 	f, err := os.Open(filepath.Join(root, filepath.FromSlash(File)))
+	if os.IsNotExist(err) {
+		f, err = os.Open(filepath.Join(root, filepath.FromSlash(LegacyFile)))
+	}
 	if os.IsNotExist(err) {
 		return nil, nil
 	}

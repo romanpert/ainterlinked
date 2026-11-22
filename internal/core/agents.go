@@ -243,7 +243,7 @@ func (s *Store) nameFree(tx *sql.Tx, name, exceptID string) bool {
 
 // reservedNames can't be taken by agents: messages "from human" must really
 // come from the operator.
-var reservedNames = map[string]bool{"human": true, "user": true, "system": true, "operator": true, "admin": true, "owner": true, SystemSender: true}
+var reservedNames = map[string]bool{"human": true, "user": true, "system": true, "operator": true, "admin": true, "owner": true, SystemSender: true, LegacySystemSender: true}
 
 // nameReuseWindow keeps an automatic name from going to a new session while
 // the session that had it may still be addressed by it: peers that saw

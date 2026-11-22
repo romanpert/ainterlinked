@@ -1,5 +1,5 @@
 // Package harness knows every supported AI coding harness: how to detect it
-// on this machine and how to wire interlinked into its user-level config
+// on this machine and how to wire ainterlinked into its user-level config
 // (MCP server + hooks), idempotently and reversibly.
 package harness
 
@@ -20,7 +20,7 @@ import (
 // Env is what an installer needs to know about the machine.
 type Env struct {
 	Home string // user home directory
-	Bin  string // absolute path of the interlinked executable
+	Bin  string // absolute path of the ainterlinked executable
 	GOOS string
 	// LookPath finds harness CLIs (overridable in tests).
 	LookPath func(string) (string, error)
@@ -45,20 +45,31 @@ type Harness struct {
 	wired     func(e *Env) Wiring
 }
 
+// Server is the name the MCP server is registered under in every harness.
+const Server = "ainterlinked"
+
+// legacyServer is the name used before the rename. Install replaces an
+// entry under it with Server; uninstall removes both.
+const legacyServer = "interlinked"
+
 // Wiring is what's currently configured.
 type Wiring struct {
 	MCP   bool
 	Hooks bool
-	Files []string
+	// Legacy: an entry from before the rename ("interlinked") is still
+	// there; `ainterlinked install` replaces it.
+	Legacy bool
+	Files  []string
 }
 
 // Detect returns evidence that the harness is installed (empty = not found).
 func (h *Harness) Detect(e *Env) []string { return h.detect(e) }
 
-// Install queues the changes that wire interlinked in.
+// Install queues the changes that wire ainterlinked in (and take out what
+// an older version wired under the name interlinked).
 func (h *Harness) Install(e *Env, t *Tx) { h.install(e, t) }
 
-// Uninstall queues the changes that remove interlinked.
+// Uninstall queues the changes that remove ainterlinked, old names included.
 func (h *Harness) Uninstall(e *Env, t *Tx) { h.uninstall(e, t) }
 
 // Wired reports the current state.
@@ -126,11 +137,11 @@ func (e *Env) hookCmd(harness, event string, powershell bool) string {
 	return e.cmdPath(powershell) + " hook " + harness + " " + event
 }
 
-// ourCmd matches a command line we write: the interlinked executable (any
-// path, optionally quoted or PowerShell-invoked) followed by exactly
-// "hook <harness> <event>". A user's own script that merely mentions
-// "interlinked" doesn't match.
-var ourCmd = regexp.MustCompile(`(?i)(^|[\s"'/\\&])interlinked(\.exe)?['"]?\s+hook\s+[\w.-]+\s+\w+\s*$`)
+// ourCmd matches a command line we write: the ainterlinked executable, or
+// the interlinked one from before the rename (any path, optionally quoted or
+// PowerShell-invoked), followed by exactly "hook <harness> <event>". A
+// user's own script that merely mentions the name doesn't match.
+var ourCmd = regexp.MustCompile(`(?i)(^|[\s"'/\\&])a?interlinked(\.exe)?['"]?\s+hook\s+[\w.-]+\s+\w+\s*$`)
 
 // ours recognises a single hook entry (one command object) we wrote.
 func ours(raw []byte) bool {
@@ -279,21 +290,43 @@ func removeFromList(src []byte, path []string, value string) ([]byte, error) {
 	return out, err
 }
 
-// jsonServer wires {<key>: {"interlinked": entry}} into a JSON config file.
+// under is key with name appended, as a fresh slice.
+func under(key []string, name string) []string {
+	return append(append([]string{}, key...), name)
+}
+
+// jsonServer wires {<key>: {"ainterlinked": entry}} into a JSON config file,
+// dropping an entry an older version wrote under "interlinked".
 func jsonServer(t *Tx, file string, key []string, entry any) {
 	t.EditJSON(file, func(old []byte) ([]byte, error) {
-		return jsonc.Set(old, append(append([]string{}, key...), "interlinked"), entry)
+		out, err := jsonc.Set(old, under(key, Server), entry)
+		if err != nil {
+			return nil, err
+		}
+		out, _, err = jsonc.Delete(out, under(key, legacyServer))
+		return out, err
 	})
 }
 
+// jsonServerRemove removes our entry, under either name.
 func jsonServerRemove(t *Tx, file string, key []string) {
-	if !jsonHas(file, append(append([]string{}, key...), "interlinked")...) {
+	if !jsonHas(file, under(key, Server)...) && !jsonHas(file, under(key, legacyServer)...) {
 		return
 	}
 	t.EditJSON(file, func(old []byte) ([]byte, error) {
-		out, _, err := jsonc.Delete(old, append(append([]string{}, key...), "interlinked"))
+		out, _, err := jsonc.Delete(old, under(key, Server))
+		if err != nil {
+			return nil, err
+		}
+		out, _, err = jsonc.Delete(out, under(key, legacyServer))
 		return out, err
 	})
+}
+
+// jsonWiring reports whether file has our entry under key, and whether an
+// old one is still there.
+func jsonWiring(file string, key ...string) (mcp, legacy bool) {
+	return jsonHas(file, under(key, Server)...), jsonHas(file, under(key, legacyServer)...)
 }
 
 // ToolNames lists the MCP tools (for harnesses that want an allow-list).

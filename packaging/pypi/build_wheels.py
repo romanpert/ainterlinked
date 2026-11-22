@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build platform wheels that ship the interlinked Go binary.
+"""Build platform wheels that ship the ainterlinked Go binary.
 
 Each wheel puts the static binary in `<name>.data/scripts/`, so pip/pipx/uv
 install it straight onto PATH (the same layout ruff and uv use). No Python
@@ -19,9 +19,9 @@ import subprocess
 import sys
 import zipfile
 
-DIST_NAME = "ainterlinked"  # PyPI name ("interlinked" is taken by another project)
+DIST_NAME = "ainterlinked"  # PyPI name
 PKG = "ainterlinked"  # import package (python -m ainterlinked)
-GO_MAIN = "./cmd/interlinked"
+GO_MAIN = "./cmd/ainterlinked"
 LDFLAG_VERSION = "github.com/romanpert/ainterlinked/internal/cli.Version"
 SUMMARY = "Real-time bus for AI coding agents across harnesses: Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode and more"
 
@@ -39,7 +39,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def build_binary(goos: str, goarch: str, version: str, out: pathlib.Path) -> pathlib.Path:
-    exe = out / f"interlinked-{goos}-{goarch}{'.exe' if goos == 'windows' else ''}"
+    exe = out / f"ainterlinked-{goos}-{goarch}{'.exe' if goos == 'windows' else ''}"
     env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"}
     cmd = ["go", "build", "-trimpath", "-ldflags", f"-s -w -X {LDFLAG_VERSION}={version}", "-o", str(exe), GO_MAIN]
     subprocess.run(cmd, cwd=ROOT, env=env, check=True)
@@ -79,8 +79,8 @@ def metadata(version: str) -> str:
     return "\n".join(lines)
 
 
-INIT = '''"""interlinked: real-time bus for AI coding agents. The work is done by the
-bundled `interlinked` executable; this module only locates and runs it."""
+INIT = '''"""ainterlinked: real-time bus for AI coding agents. The work is done by the
+bundled `ainterlinked` executable; this module only locates and runs it."""
 import os
 import sys
 import sysconfig
@@ -89,8 +89,8 @@ __version__ = "{version}"
 
 
 def binary_path() -> str:
-    """Absolute path of the bundled interlinked executable."""
-    name = "interlinked.exe" if os.name == "nt" else "interlinked"
+    """Absolute path of the bundled ainterlinked executable."""
+    name = "ainterlinked.exe" if os.name == "nt" else "ainterlinked"
     candidates = [sysconfig.get_path("scripts")]
     user = sysconfig.get_path("scripts", f"{{os.name}}_user") if os.name else None
     if user:
@@ -128,7 +128,7 @@ def build_wheel(key: str, version: str, binary: pathlib.Path, dist: pathlib.Path
     wheel_name = f"{DIST_NAME.replace('-', '_')}-{version}-py3-none-{tag}.whl"
     distinfo = f"{DIST_NAME.replace('-', '_')}-{version}.dist-info"
     data = f"{DIST_NAME.replace('-', '_')}-{version}.data"
-    exe_name = "interlinked.exe" if goos == "windows" else "interlinked"
+    exe_name = "ainterlinked.exe" if goos == "windows" else "ainterlinked"
     files: list[tuple[str, bytes, int]] = [
         (f"{PKG}/__init__.py", INIT.format(version=version).encode(), 0o644),
         (f"{PKG}/__main__.py", MAIN.encode(), 0o644),
@@ -136,9 +136,7 @@ def build_wheel(key: str, version: str, binary: pathlib.Path, dist: pathlib.Path
         (f"{distinfo}/METADATA", metadata(version).encode(), 0o644),
         (f"{distinfo}/licenses/LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
         (f"{distinfo}/licenses/NOTICE", (ROOT / "NOTICE").read_bytes(), 0o644),
-        # `ainterlinked` (the project's name) runs the same bundled binary.
-        (f"{distinfo}/entry_points.txt", f"[console_scripts]\nainterlinked = {PKG}.__main__:main\n".encode(), 0o644),
-        (f"{distinfo}/WHEEL", ("Wheel-Version: 1.0\nGenerator: interlinked build_wheels.py\nRoot-Is-Purelib: false\n"
+        (f"{distinfo}/WHEEL", ("Wheel-Version: 1.0\nGenerator: ainterlinked build_wheels.py\nRoot-Is-Purelib: false\n"
                                 + "".join(f"Tag: py3-none-{t}\n" for t in tags)).encode(), 0o644),
     ]
     record = [record_line(p, d) for p, d, _ in files] + [f"{distinfo}/RECORD,,"]

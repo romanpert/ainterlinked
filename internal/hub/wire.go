@@ -99,7 +99,7 @@ func (r *Remote) read(c net.Conn) {
 	r.mu.Unlock()
 }
 
-var errLost = errors.New("interlinked: lost the connection to the hub process")
+var errLost = errors.New("ainterlinked: lost the connection to the hub process")
 
 // Call implements Client.
 func (r *Remote) Call(ctx context.Context, method string, params, out any) error {
@@ -156,11 +156,11 @@ func (r *Remote) send(method string, raw json.RawMessage) (chan wireResp, int64,
 		r.mu.Lock()
 	}
 	if r.closed {
-		return nil, 0, errors.New("interlinked: hub client closed")
+		return nil, 0, errors.New("ainterlinked: hub client closed")
 	}
 	if r.conn == nil {
 		if err := r.connect(); err != nil {
-			return nil, 0, fmt.Errorf("interlinked: can't reach the hub process: %w", err)
+			return nil, 0, fmt.Errorf("ainterlinked: can't reach the hub process: %w", err)
 		}
 		// The hub answers requests concurrently, so who this client is must
 		// be settled before anything else goes out on the new connection.

@@ -430,7 +430,7 @@ func (s *Store) CheckFile(ctx context.Context, agent, file string) (*Lock, error
 		return nil, nil // outside the project: not ours to police
 	case err != nil:
 		// A path we can't evaluate must not slip past a reservation: fail closed.
-		return &Lock{Pattern: file, Agent: "interlinked", Reason: "refused: " + err.Error()}, nil
+		return &Lock{Pattern: file, Agent: SystemSender, Reason: "refused: " + err.Error()}, nil
 	}
 	if err := s.tx(ctx, s.settle); err != nil {
 		return nil, err

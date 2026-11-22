@@ -40,7 +40,7 @@ const repoCovenant = `# Covenant
 - New dependencies need a one-line reason in the commit message.
 ## docs/**
 - Docs follow the code: update them in the same commit.
-## .interlinked/covenant.md
+## .ainterlinked/covenant.md
 - Propose changes to the owner; don't edit the covenant without their OK.
 `
 
@@ -288,7 +288,7 @@ func TestCovenantDeliveriesAreLogged(t *testing.T) {
 	if r := out["hookSpecificOutput"].(map[string]any)["permissionDecisionReason"].(string); !strings.Contains(r, "edit NOT applied") {
 		t.Fatalf("a held edit must say it wasn't applied: %s", r)
 	}
-	b, err := os.ReadFile(filepath.Join(os.Getenv("INTERLINKED_HOME"), "covenant.log"))
+	b, err := os.ReadFile(filepath.Join(os.Getenv("AINTERLINKED_HOME"), "covenant.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestReservationCheckFallsBackOnAnOlderHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.as("2", "codex", "SessionStart", nil)
-	t.Setenv("INTERLINKED_ANCHOR_PID", "2")
+	t.Setenv("AINTERLINKED_ANCHOR_PID", "2")
 	raw, _ := json.Marshal(map[string]any{"cwd": e.dir, "tool_name": "Edit", "tool_input": map[string]any{"file_path": filepath.Join(e.dir, "main.go")}})
 	r, err := Handle(context.Background(), e.cfg, oldHub{e.c}, "codex", "PreToolUse", ParseInput(raw))
 	if err != nil || !strings.Contains(r.Deny, "main.go is reserved by "+owner.Name) {

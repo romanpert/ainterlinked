@@ -140,7 +140,7 @@ function renderHarnesses(list) {
   $("harnesses").innerHTML = seen.map((h) => {
     let note, cls;
     if (!h.mcp) { note = `detected, not wired · <span class="act">ainterlinked install ${esc(h.id)}</span>`; cls = "s-blocked"; }
-    else if (!h.enabled) { note = "muted · interlinked enable " + esc(h.id); cls = "s-offline"; }
+    else if (!h.enabled) { note = "muted · ainterlinked enable " + esc(h.id); cls = "s-offline"; }
     else if (h.has_hooks && !h.hooks) { note = `MCP only, hooks missing · <span class="act">ainterlinked install ${esc(h.id)}</span>`; cls = "s-waiting"; }
     else { note = "wired"; cls = "s-working"; }
     return `<div class="sub ${cls}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="dot"></span><b style="color:var(--fg)">${esc(h.name)}</b>

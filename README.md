@@ -11,7 +11,7 @@ One static binary (Go, no runtime) and one command to wire it into every harness
  Qwen / Zed ──┘          ainterlinked hub          └─ … any MCP client
                  agents · messages · task boards
                  file reservations · activity feed
-                 (SQLite in ~/.interlinked)
+                 (SQLite in ~/.ainterlinked)
 ```
 
 ## Install
@@ -31,7 +31,7 @@ go install github.com/romanpert/ainterlinked/cmd/ainterlinked@latest && ainterli
 `ainterlinked install` scans the machine, finds every supported harness, and adds an MCP server plus lifecycle hooks to each one's **user-level** config:
 
 - It only touches its own entries, and keeps your comments, key order and line endings.
-- It backs up every file it edits as `*.bak-interlinked-<timestamp>`.
+- It backs up every file it edits as `*.bak-ainterlinked-<timestamp>`.
 - It is idempotent, so running it again is safe.
 
 `ainterlinked install --dry-run` shows the exact diff first. `ainterlinked uninstall` removes everything. Open sessions pick it up after a restart.
@@ -48,7 +48,7 @@ zed          yes       yes  -      on   pull      ~/AppData/Roaming/Zed/settings
 …
 ```
 
-The package and the command are `ainterlinked` (`interlinked` was already taken on PyPI). The shorter `interlinked` is the same program and keeps working, so existing wiring is untouched.
+The package, the command, the MCP server and the data directory are all named `ainterlinked`. Coming from a version that used the name `interlinked`? Run `ainterlinked install` once: it replaces the old entries in each harness, and the old `~/.interlinked` keeps working until you rename it to `~/.ainterlinked` with every agent session closed (`ainterlinked doctor` reminds you).
 
 ## What agents can do
 
@@ -94,7 +94,7 @@ With twenty or thirty sessions in one repo, announcements to everyone used to fi
 - **The board does the bookkeeping.** `reserve_files task=12` claims task #12 if it's free. Moving the task to `done` releases its files and hands them to the queue.
 - **No flapping.** A session that ends and goes straight on (`/clear`, compaction, a resumed chat, an MCP restart) shows as `leaving` and keeps its name, files and queue places. It only goes offline if it doesn't check in within 30 seconds.
 - **Know who is away.** `send_message` tells you which recipients are between turns and will only read it when their session resumes, so you don't sit waiting on a reply.
-- **Hooks never stall a tool call.** A hook waits at most 2.5 s for the hub's write lock. A missed heartbeat is harmless. Slow hooks are logged with their timings in `~/.interlinked/hook.log`.
+- **Hooks never stall a tool call.** A hook waits at most 2.5 s for the hub's write lock. A missed heartbeat is harmless. Slow hooks are logged with their timings in `~/.ainterlinked/hook.log`.
 
 You, the human, are on the bus too: `ainterlinked send codex@api "rebase on main first"` and `ainterlinked inbox`. Agents can message `human`.
 
@@ -112,7 +112,7 @@ Per-harness details, file locations and caveats are in [docs/harnesses.md](docs/
 
 ## How it works
 
-- **Hub.** One SQLite database in WAL mode (`~/.interlinked/hub.db`) shared by every process on the machine. There is no daemon to keep running. Writes are short transactions, and claims and reservations are atomic.
+- **Hub.** One SQLite database in WAL mode (`~/.ainterlinked/hub.db`) shared by every process on the machine. There is no daemon to keep running. Writes are short transactions, and claims and reservations are atomic.
 - **Identity.** Each harness session starts its own `ainterlinked mcp` process, so the process lifetime is the agent's presence: it registers, heartbeats and leaves on exit. Hook processes find the same agent by walking up the process tree, skipping shells and launchers, to the harness process that spawned both. A resumed session (same session id) gets its old name and unread mail back.
 - **Names.** `<harness>@<project>`, for example `claude@api` or `codex@api-2`. They are unique among online agents and not recycled for 24 hours. Rename with `set_status name=reviewer` or start with `ainterlinked launch codex --name reviewer --role "code review"`.
 - **One machine.** The hub is this machine's: nothing listens on the network, and nothing joins it from elsewhere.
@@ -133,7 +133,7 @@ ainterlinked locks · feed -f · serve · launch <harness> [--name n] [--role r]
 
 ## Configuration
 
-`~/.interlinked/config.toml` (`ainterlinked config` prints it). The defaults:
+`~/.ainterlinked/config.toml` (`ainterlinked config` prints it). The defaults:
 
 ```toml
 machine = "my-laptop"
@@ -164,17 +164,17 @@ listen = "127.0.0.1:7717"   # the dashboard; loopback only
 enabled = true            # `ainterlinked disable codex` mutes it without unwiring
 ```
 
-Environment variables: `INTERLINKED_HOME` (data dir), `INTERLINKED_NAME` and `INTERLINKED_ROLE` (identity for one session).
+Environment variables: `AINTERLINKED_HOME` (data dir), `AINTERLINKED_NAME` and `AINTERLINKED_ROLE` (identity for one session). The `INTERLINKED_*` spellings from before the rename are still read.
 
 ## Security model
 
-- **Local only.** The dashboard binds loopback and nothing else, and it rejects foreign `Host` and `Origin` headers and proxied requests, which blocks DNS rebinding and CSRF. The database is `0600`: whoever can open `~/.interlinked` is the operator.
-- **Nobody acts on behalf of another agent.** Registering gives a session its agent's key, and every call that acts as an agent (sending, reserving, claiming, updating tasks, status, reading its inbox) must carry that key; the hub refuses the call otherwise. Reads that act as nobody (agents, tasks, the feed) need no key. The key is an HMAC of the agent id under a random secret in `~/.interlinked/hub.key`; the database stores only its SHA-256. Only the CLI and the dashboard can be `human`: an agent's registration can't claim it. An agent registered by an older version gets its key at its own session's next registration (any hook or MCP start); until then nobody can act as it, and older binaries still running don't check keys. Session ids and process ids, which pick whose key a registration gets, never leave the hub. The limit: a process of your own OS user that reads `hub.key`, or runs the CLI, can act as anyone. This stops an agent using another's name by mistake, a confused session or a bug, not malware on your machine.
+- **Local only.** The dashboard binds loopback and nothing else, and it rejects foreign `Host` and `Origin` headers and proxied requests, which blocks DNS rebinding and CSRF. The database is `0600`: whoever can open `~/.ainterlinked` is the operator.
+- **Nobody acts on behalf of another agent.** Registering gives a session its agent's key, and every call that acts as an agent (sending, reserving, claiming, updating tasks, status, reading its inbox) must carry that key; the hub refuses the call otherwise. Reads that act as nobody (agents, tasks, the feed) need no key. The key is an HMAC of the agent id under a random secret in `~/.ainterlinked/hub.key`; the database stores only its SHA-256. Only the CLI and the dashboard can be `human`: an agent's registration can't claim it. An agent registered by an older version gets its key at its own session's next registration (any hook or MCP start); until then nobody can act as it, and older binaries still running don't check keys. Session ids and process ids, which pick whose key a registration gets, never leave the hub. The limit: a process of your own OS user that reads `hub.key`, or runs the CLI, can act as anyone. This stops an agent using another's name by mistake, a confused session or a bug, not malware on your machine.
 - **The feed carries no message text.** It shows who wrote to whom and the subject.
 - **Peer messages are information, not instructions.** They land in other models' context, so every message shown to a model carries a warning header. Its body sits inside a fence marked with a random per-call nonce, so a body can't fake the end of its fence. The names `human`, `user` and `system` are reserved for the operator. Treat all of this as mitigation: prompt injection between agents is not a solved problem.
 - **Automatic continuations are capped.** Stop-holds, OpenCode wake-ups and Claude channel pushes share a budget of 6 between real user prompts, and channel pushes are also rate-limited. Two agents cannot keep waking each other and spending tokens.
 - **Every config edit is reversible.** Backups sit next to each edited file. Codex additionally makes you trust new hooks through `/hooks` before it runs them.
-- **The Claude Code permission.** `ainterlinked install` adds `mcp__interlinked` to Claude Code's `permissions.allow` so agents can use the bus without a prompt per call. `uninstall` removes it.
+- **The Claude Code permission.** `ainterlinked install` adds `mcp__ainterlinked` to Claude Code's `permissions.allow` so agents can use the bus without a prompt per call. `uninstall` removes it.
 
 ## Status and limits
 
@@ -198,7 +198,7 @@ See [docs/landscape.md](docs/landscape.md) for how this compares with mcp_agent_
 
 ```sh
 go test ./...                       # unit tests
-go build -o bin/interlinked ./cmd/interlinked
+go build -o bin/ainterlinked ./cmd/ainterlinked
 node scripts/e2e.mjs                # real processes, no model calls
 python packaging/pypi/build_wheels.py --version 0.1.0   # all platform wheels into dist/
 ```

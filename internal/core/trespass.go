@@ -24,8 +24,10 @@ type TrespassReq struct {
 	// ByUser: the turn was started by the user (the user's order, the
 	// user's act); otherwise peer messages kept it going.
 	ByUser bool `json:"by_user,omitempty"`
-	// Transcript is the harness's record of the session (the hook payload's
-	// transcript_path): where the hub checks a ByUser claim.
+	// Transcript is where the hook says the harness's record of the session
+	// is (its transcript_path): a hint only. The hub checks a ByUser claim
+	// in the session's file under the harness's own directory, wherever
+	// this points.
 	Transcript string `json:"transcript,omitempty"`
 }
 

@@ -135,7 +135,7 @@ func (s *Store) TouchFile(ctx context.Context, agent, file string) (*Lock, error
 	case errors.Is(err, errOutside):
 		return nil, nil
 	case err != nil:
-		return &Lock{Pattern: file, Agent: "interlinked", Reason: "refused: " + err.Error()}, nil
+		return &Lock{Pattern: file, Agent: SystemSender, Reason: "refused: " + err.Error()}, nil
 	}
 	var held *Lock
 	err = s.tx(ctx, func(tx *sql.Tx) error {

@@ -14,7 +14,7 @@ import (
 // Models copy ids as they see them ("#12", "12"): those still thread.
 func TestIdsWrittenAsTextStillCount(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("INTERLINKED_HOME", home)
+	t.Setenv("AINTERLINKED_HOME", home)
 	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Minute})
 	if err != nil {
 		t.Fatal(err)

@@ -31,7 +31,10 @@ type Message struct {
 
 // SystemSender is the sender id/name of notices the hub itself sends (a
 // reservation you queued for is now yours, someone is waiting for yours).
-const SystemSender = "interlinked"
+const SystemSender = "ainterlinked"
+
+// LegacySystemSender is the id notices were sent under before the rename.
+const LegacySystemSender = "interlinked"
 
 // SendReq sends a message. To accepts an agent name or id, "*" (everyone
 // online), "project" (online agents in the sender's project), "branch"
@@ -84,7 +87,7 @@ func (s *Store) Send(ctx context.Context, r SendReq) (Message, error) {
 	}
 	display := r.To
 	if strings.TrimSpace(r.To) == "" && r.ReplyTo > 0 {
-		if parent.FromID == SystemSender {
+		if parent.FromID == SystemSender || parent.FromID == LegacySystemSender {
 			return Message{}, errors.New("that was an automatic notice from the hub; reply to an agent by name")
 		}
 		r.To, display = parent.FromID, parent.From // resolve by id, show the name

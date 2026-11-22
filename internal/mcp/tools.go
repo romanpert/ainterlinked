@@ -43,7 +43,7 @@ func ro() prop { return prop{"readOnlyHint": true} }
 
 func toolDefs() []tool {
 	return []tool{
-		{"whoami", "Your identity on the interlinked bus, unread count and who else is online in your project.", obj(prop{}), ro()},
+		{"whoami", "Your identity on the ainterlinked bus, unread count and who else is online in your project.", obj(prop{}), ro()},
 		{"list_agents", "List AI agents (any harness) online now: name, harness, project, branch, state, current activity, and what each has done lately (facts, not a score).",
 			obj(prop{"project": str("Only this project name"), "harness": str("Only this harness, e.g. codex"), "include_offline": boo("Include agents seen in the last 7 days")}), ro()},
 		{"set_status", "Tell peers what you're doing. Call when you start/finish work or get blocked.",
@@ -94,9 +94,9 @@ func toolDefs() []tool {
 func (s *Server) ensure(ctx context.Context) (string, error) {
 	if err := s.register(); err != nil {
 		if errors.Is(err, errDisabled) {
-			return "", fmt.Errorf("interlinked is disabled for %s (interlinked enable %s)", s.harness, s.harness)
+			return "", fmt.Errorf("ainterlinked is disabled for %s (ainterlinked enable %s)", s.harness, s.harness)
 		}
-		return "", fmt.Errorf("interlinked: can't reach the hub (%v); run `interlinked doctor`", err)
+		return "", fmt.Errorf("ainterlinked: can't reach the hub (%v); run `ainterlinked doctor`", err)
 	}
 	return s.agentID(), nil
 }

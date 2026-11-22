@@ -55,7 +55,7 @@ func TestDashboardState(t *testing.T) {
 	if len(st.Agents) != 2 || len(st.Messages) != 1 || len(st.Harnesses) != 1 || st.Messages[0].From != "human" {
 		t.Fatalf("state: %+v", st)
 	}
-	if w := do(t, s, "GET", "/", "", nil); !strings.Contains(w.Body.String(), "interlinked") || w.Header().Get("Content-Security-Policy") == "" {
+	if w := do(t, s, "GET", "/", "", nil); !strings.Contains(w.Body.String(), "ainterlinked") || w.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("dashboard not served with a CSP")
 	}
 	for _, gone := range []string{"/rpc", "/pair", "/mcp"} {

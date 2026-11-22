@@ -1,4 +1,4 @@
-// Package core is the interlinked hub: agents, messages, task boards, file
+// Package core is the ainterlinked hub: agents, messages, task boards, file
 // reservations and an activity feed, persisted in a single SQLite database
 // (WAL mode) that every harness process on the machine shares.
 package core

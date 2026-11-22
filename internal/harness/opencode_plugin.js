@@ -1,12 +1,12 @@
-// interlinked plugin for OpenCode — written by `interlinked install`.
-// Remove with `interlinked uninstall opencode` (or delete this file).
-// It reports presence/activity to the interlinked bus, appends peer messages
+// ainterlinked plugin for OpenCode — written by `ainterlinked install`.
+// Remove with `ainterlinked uninstall opencode` (or delete this file).
+// It reports presence/activity to the ainterlinked bus, appends peer messages
 // to tool results, blocks edits to files other agents reserved, and wakes
 // idle sessions when a message arrives (true push delivery).
-const BIN = "__INTERLINKED_BIN__";
+const BIN = "__AINTERLINKED_BIN__";
 const POLL_MS = 3000;
 
-export const Interlinked = async ({ client, directory }) => {
+export const AInterlinked = async ({ client, directory }) => {
   const idle = new Set();
 
   const run = async (event, payload) => {
@@ -25,7 +25,7 @@ export const Interlinked = async ({ client, directory }) => {
   };
 
   // Sessions we just woke: their next chat.message is ours, not the user's,
-  // so it must not reset interlinked's auto-continue budget.
+  // so it must not reset ainterlinked's auto-continue budget.
   const woke = new Map();
 
   const wake = async (sessionID, text) => {
@@ -77,7 +77,7 @@ export const Interlinked = async ({ client, directory }) => {
       const t = woke.get(input.sessionID);
       const auto = t !== undefined && Date.now() - t < 30000;
       woke.delete(input.sessionID);
-      await run("prompt", { session_id: input.sessionID, interlinked_auto: auto });
+      await run("prompt", { session_id: input.sessionID, ainterlinked_auto: auto });
     },
     "tool.execute.before": async (input, output) => {
       const r = await run("PreToolUse", { session_id: input.sessionID, tool_name: input.tool, tool_input: output.args });

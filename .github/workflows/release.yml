@@ -25,7 +25,7 @@ jobs:
       - run: python packaging/pypi/build_wheels.py --version "${GITHUB_REF_NAME#v}" --dist dist
       - run: pipx run twine check dist/*.whl
       - name: checksums
-        run: cd dist/bin && sha256sum interlinked-* > SHA256SUMS
+        run: cd dist/bin && sha256sum ainterlinked-* > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -58,6 +58,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/bin/interlinked-*
+            dist/bin/ainterlinked-*
             dist/bin/SHA256SUMS
           generate_release_notes: true
