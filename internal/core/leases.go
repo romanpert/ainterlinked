@@ -84,7 +84,7 @@ func (s *Store) lapse(tx *sql.Tx) error {
 				clip(strings.Join(pats, ", "), 300), after))
 		event(tx, now, &who, "lock", fmt.Sprintf("%s's reservations lapsed (idle): %s", who.Name, clip(strings.Join(pats, ", "), 120)))
 	}
-	return s.lapseUnused(tx)
+	return nil
 }
 
 // lapseUnused ends explicit reservations that went unused past their

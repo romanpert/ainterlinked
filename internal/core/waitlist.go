@@ -135,13 +135,17 @@ func recentlyTold(tx *sql.Tx, now int64, holderID, waiter, pattern string) bool 
 }
 
 // settle brings presence and the queue up to date: reap silent agents, end
-// the reservations of agents idle too long, then hand released or expired
-// reservations to whoever waits for them.
+// the reservations of agents idle too long and those gone unused (two terms,
+// each the user's to turn off), then hand released or expired reservations
+// to whoever waits for them.
 func (s *Store) settle(tx *sql.Tx) error {
 	if err := s.reap(tx); err != nil {
 		return err
 	}
 	if err := s.lapse(tx); err != nil {
+		return err
+	}
+	if err := s.lapseUnused(tx); err != nil {
 		return err
 	}
 	return s.promote(tx)
