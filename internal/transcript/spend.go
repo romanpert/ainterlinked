@@ -177,35 +177,44 @@ var header = regexp.MustCompile(`<<peer-message #(\d+) from [^\n]*\| fence ([0-9
 // turn open for: each fenced message's header, skipping its body up to its
 // closing fence, so text inside a body (the sender's) can't name others.
 // One delivery has one fence nonce, which the hub strips from bodies and
-// subjects: every header must carry the first one's (only the hub's own
-// preamble comes before it). Group briefs, one sender-written line each,
-// come after the messages and aren't read. Without a closing fence the
-// rest is not read.
+// subjects. Only the hub's own preamble comes before the first header, so
+// that one is genuine. Each later header must start the line right after
+// the previous closing fence and carry the same nonce. Anything else at
+// that point (the "+K more" note, the group briefs, whose lines the
+// senders write) ends the reading. A body can't end it early: the reading
+// never searches inside a body for anything but its own closing fence.
+// A delivery of briefs alone names no message.
 func heldFor(text string) []string {
-	if i := strings.Index(text, "<<peer-briefs:"); i >= 0 {
-		text = text[:i]
+	m := header.FindStringSubmatchIndex(text)
+	if m == nil {
+		return nil
 	}
+	if b := strings.Index(text[:m[0]], "<<peer-briefs:"); b >= 0 {
+		return nil
+	}
+	nonce := text[m[4]:m[5]]
 	var ids []string
-	nonce := ""
 	for {
-		m := header.FindStringSubmatchIndex(text)
-		if m == nil {
-			return ids
-		}
-		id, fence := text[m[2]:m[3]], text[m[4]:m[5]]
-		if nonce == "" {
-			nonce = fence
-		}
-		if fence != nonce {
-			return ids
-		}
+		id := text[m[2]:m[3]]
 		rest := text[m[1]:]
-		end := strings.Index(rest, "<<end #"+id+" | fence "+fence)
+		end := strings.Index(rest, "<<end #"+id+" | fence "+nonce)
 		if end < 0 {
 			return ids
 		}
 		ids = append(ids, "#"+id)
 		text = rest[end:]
+		nl := strings.IndexByte(text, '\n')
+		if nl < 0 {
+			return ids
+		}
+		text = text[nl+1:]
+		line := text
+		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+			line = line[:nl]
+		}
+		if m = header.FindStringSubmatchIndex(line); m == nil || m[0] != 0 || line[m[4]:m[5]] != nonce {
+			return ids
+		}
 	}
 }
 
