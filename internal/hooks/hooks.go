@@ -633,7 +633,7 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Confi
 	b.WriteString(boardLine(ctx, c, me, inProject))
 	// What sessions that left this checkout knew: a line each, read on demand.
 	var left []core.Handover
-	if c.Call(ctx, "handovers", core.HandoverReq{Agent: me.ID}, &left) == nil {
+	if c.Call(ctx, "handovers", core.HandoverReq{Agent: me.ID, Start: true}, &left) == nil {
 		if s := render.Handovers(left); s != "" {
 			b.WriteString("\n" + s)
 		}

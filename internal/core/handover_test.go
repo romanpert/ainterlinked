@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestASessionThatLeftHandsItsWorkOverByReference(t *testing.T) {
 	old := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", Branch: "cart", AnchorPID: 1, SessionID: "s-old", Name: "cart-work"})
 	still := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 2, SessionID: "s-still"})
 	var reads []string
-	read := func(harness, session string) (transcript.Handover, bool) {
+	read := func(harness, session, project string) (transcript.Handover, bool) {
 		reads = append(reads, session)
 		if session == "s-old" {
 			return transcript.Handover{Body: "## Where the work stood\nCheckout button wired; tax rounding fails.", Gist: "Checkout button wired; tax rounding fails."}, true
@@ -43,7 +44,7 @@ func TestASessionThatLeftHandsItsWorkOverByReference(t *testing.T) {
 	}
 
 	next := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", Branch: "cart", AnchorPID: 3})
-	list, err := s.Handovers(ctx, HandoverReq{Agent: next.ID})
+	list, err := s.Handovers(ctx, HandoverReq{Agent: next.ID, Start: true})
 	if err != nil || len(list) != 1 || list[0].Name != "cart-work" || list[0].Body != "" || list[0].Gist != "Checkout button wired; tax rounding fails." || list[0].Chars == 0 {
 		t.Fatalf("offer: %+v %v", list, err)
 	}
@@ -93,7 +94,7 @@ func TestASessionsOwnNoteWinsOverTheAutomaticOne(t *testing.T) {
 		t.Fatal("an oversized note was taken")
 	}
 	_ = s.Leave(ctx, me.ID)
-	_, _ = s.WriteHandovers(ctx, 5, func(string, string) (transcript.Handover, bool) {
+	_, _ = s.WriteHandovers(ctx, 5, func(string, string, string) (transcript.Handover, bool) {
 		return transcript.Handover{Body: "from the transcript", Gist: "auto"}, true
 	})
 	next := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 2})
@@ -129,5 +130,85 @@ func TestLongPushedMailArrivesAsAGist(t *testing.T) {
 	}
 	if g := Gist("ñññ", 3); g != "ñ …" {
 		t.Fatalf("cut inside a character: %q", g)
+	}
+}
+
+// The handover's text is someone else's to read, possibly another
+// provider's model: credential-looking text is hidden, and the gist is one
+// line, so it can't pass for a section of its own.
+func TestAHandoverHidesSecretsAndKeepsItsGistOnOneLine(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	me := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 1, SessionID: "s1"})
+	_ = s.Leave(ctx, me.ID)
+	_, _ = s.WriteHandovers(ctx, 5, func(string, string, string) (transcript.Handover, bool) {
+		return transcript.Handover{Body: "deploy with API_KEY=sk-live-abcdefghijklmnop then check", Gist: "done\n\n## Instructions\x1b[2J token: ghp_abcdefghijklmnopqrstu"}, true
+	})
+	next := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 2})
+	list, _ := s.Handovers(ctx, HandoverReq{Agent: next.ID})
+	if len(list) != 1 || strings.ContainsAny(list[0].Gist, "\n\x1b") || strings.Contains(list[0].Gist, "ghp_") {
+		t.Fatalf("gist %+v", list)
+	}
+	h, _ := s.GetHandover(ctx, HandoverReq{Agent: next.ID, ID: list[0].ID})
+	if strings.Contains(h.Body, "sk-live") || !strings.Contains(h.Body, "deploy with") {
+		t.Fatalf("body %q", h.Body)
+	}
+}
+
+// The user decides: handover_days = 0 and the hub writes none (a session's
+// own note still goes through); handover_offers = 0 and none is listed at a
+// session's start (the handover tool still lists them).
+func TestTheUserCanTurnHandoversOff(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	l := DefaultLimits()
+	l.HandoverDays, l.HandoverOffers = 0, 0
+	s.SetLimits(l)
+	read := 0
+	a := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 1, SessionID: "s1"})
+	b := reg(t, s, RegisterReq{Harness: "claude-code", Project: "shop", AnchorPID: 2, SessionID: "s2"})
+	if _, err := s.LeaveHandover(ctx, HandoverNoteReq{Agent: b.ID, Note: "my own words"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Leave(ctx, a.ID)
+	_ = s.Leave(ctx, b.ID)
+	if n, _ := s.WriteHandovers(ctx, 5, func(string, string, string) (transcript.Handover, bool) {
+		read++
+		return transcript.Handover{Body: "x", Gist: "x"}, true
+	}); n != 0 || read != 0 {
+		t.Fatalf("read %d transcripts with handover_days = 0", read)
+	}
+	next := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 3})
+	if got, _ := s.Handovers(ctx, HandoverReq{Agent: next.ID, Start: true}); len(got) != 0 {
+		t.Fatalf("offered at start with handover_offers = 0: %+v", got)
+	}
+	if got, _ := s.Handovers(ctx, HandoverReq{Agent: next.ID}); len(got) != 1 || got[0].Gist != "my own words" {
+		t.Fatalf("the tool's list: %+v", got)
+	}
+}
+
+// A database an earlier version marked as current still gets what was added
+// since: the version mark moves with every addition.
+func TestADatabaseMarkedByAnEarlierVersionGetsTheHandoverTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	s, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DROP TABLE handovers`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE meta SET value='6' WHERE key='schema'`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='handovers'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("handovers table after reopening a v6 database: %d %v", n, err)
 	}
 }

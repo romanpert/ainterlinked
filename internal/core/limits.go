@@ -20,6 +20,8 @@ type Limits struct {
 	IdleGrantMinutes       int `toml:"idle_grant_minutes"`       // a queued reservation granted to an idle agent lasts at most this
 	BriefHours             int `toml:"brief_hours"`              // unread one-line briefs are shown this long
 	MaxHolds               int `toml:"max_holds"`                // times peer mail may continue a session between two user prompts
+	HandoverDays           int `toml:"handover_days"`            // the hub writes handovers of sessions that left this recently, from their transcripts; 0: none
+	HandoverOffers         int `toml:"handover_offers"`          // handovers listed when a session starts; 0: none (the handover tool still lists them)
 }
 
 // DefaultLimits are the terms of a user who set none.
@@ -36,6 +38,8 @@ func DefaultLimits() Limits {
 		IdleGrantMinutes:       int(idleGrantTTL.Minutes()),
 		BriefHours:             int(BriefTTL.Hours()),
 		MaxHolds:               6,
+		HandoverDays:           7,
+		HandoverOffers:         3,
 	}
 }
 
@@ -53,6 +57,7 @@ func (l Limits) Check() error {
 		{"folder_use_minutes", l.FolderUseMinutes}, {"project_use_minutes", l.ProjectUseMinutes},
 		{"abandon_task_minutes", l.AbandonTaskMinutes}, {"queue_minutes", l.QueueMinutes},
 		{"idle_grant_minutes", l.IdleGrantMinutes}, {"brief_hours", l.BriefHours}, {"max_holds", l.MaxHolds},
+		{"handover_days", l.HandoverDays}, {"handover_offers", l.HandoverOffers},
 	} {
 		if f.v < 0 || f.v > maxLimit {
 			return fmt.Errorf("limits.%s = %d: use 0 (no limit) to %d", f.name, f.v, maxLimit)

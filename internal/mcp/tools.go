@@ -248,7 +248,7 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 			msg += fmt.Sprintf("\nContinuing %s: %d unread message(s), %d open task(s) of yours. read_inbox threads=true lists your conversations.", r.ContinueAs, u.Total, len(mine))
 			var took []core.Handover
 			if c.Call(ctx, "handovers", core.HandoverReq{Agent: me, Taken: true}, &took) == nil && len(took) > 0 {
-				msg += fmt.Sprintf("\nIts handover: #%d, ~%s tokens: %s (handover id=%d reads it).", took[0].ID, core.FormatTokens(int64(took[0].Chars/4)), took[0].Gist, took[0].ID)
+				msg += fmt.Sprintf("\nIts handover: #%d, ~%s tokens (handover id=%d reads it).", took[0].ID, core.FormatTokens(int64(took[0].Chars/4)), took[0].ID)
 			}
 			if len(mine) > 0 {
 				msg += "\n" + render.Tasks(mine)

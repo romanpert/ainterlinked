@@ -1,9 +1,8 @@
 package transcript
 
 import (
-	"bufio"
 	"encoding/json"
-	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -32,33 +31,27 @@ const (
 )
 
 // ReadHandover builds the handover of a harness session from its
-// transcript. ok is false when the transcript can't be found or the
-// session never reported anything.
-func ReadHandover(harness, session string) (Handover, bool) {
-	if harness != "claude-code" {
+// transcript. The transcript must be of a session that ran in project (the
+// checkout the agent registered from): the first working directory Claude
+// Code recorded in it is that folder or inside it, so a session id claimed
+// at registration can't bring another checkout's transcript in. ok is false
+// when the transcript can't be found, ran elsewhere, or the session never
+// reported anything.
+func ReadHandover(harness, session, project string) (Handover, bool) {
+	if harness != "claude-code" || project == "" {
 		return Handover{}, false
 	}
 	path := claudeFind("", session)
 	if path == "" || !regular(path) {
 		return Handover{}, false
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return Handover{}, false
-	}
-	defer f.Close()
-	var summary, report string
-	var first string
+	var summary, report, first, cwd string
 	var asks []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), Budget)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if !json.Valid(line) {
-			continue
-		}
+	var c cursor // reads whole lines, however long
+	c.read(path, func(line []byte) {
 		var e struct {
 			Type             string `json:"type"`
+			Cwd              string `json:"cwd"`
 			IsSidechain      bool   `json:"isSidechain"`
 			IsCompactSummary bool   `json:"isCompactSummary"`
 			IsMeta           bool   `json:"isMeta"`
@@ -70,7 +63,10 @@ func ReadHandover(harness, session string) (Handover, bool) {
 			} `json:"message"`
 		}
 		if json.Unmarshal(line, &e) != nil || e.IsSidechain {
-			continue
+			return
+		}
+		if cwd == "" {
+			cwd = e.Cwd
 		}
 		switch {
 		case e.IsCompactSummary:
@@ -78,7 +74,7 @@ func ReadHandover(harness, session string) (Handover, bool) {
 		case e.Type == "user" && !e.IsMeta && e.Origin != nil && e.Origin.Kind == "human":
 			t := strings.TrimSpace(textOf(e.Message.Content))
 			if t == "" {
-				continue
+				return
 			}
 			if first == "" {
 				first = t
@@ -92,8 +88,8 @@ func ReadHandover(harness, session string) (Handover, bool) {
 				report = t
 			}
 		}
-	}
-	if report == "" && summary == "" {
+	})
+	if !within(cwd, project) || (report == "" && summary == "") {
 		return Handover{}, false
 	}
 	var b strings.Builder
@@ -120,6 +116,19 @@ func ReadHandover(harness, session string) (Handover, bool) {
 		b.WriteString("\n")
 	}
 	return Handover{Body: strings.TrimSpace(b.String()), Gist: gistOf(summary, report, first)}, true
+}
+
+// within reports whether dir is project or a folder inside it.
+func within(dir, project string) bool {
+	if dir == "" {
+		return false
+	}
+	d, p := filepath.Clean(filepath.FromSlash(dir)), filepath.Clean(filepath.FromSlash(project))
+	if samePath(d, p) {
+		return true
+	}
+	sep := string(filepath.Separator)
+	return len(d) > len(p) && samePath(d[:len(p)+1], strings.TrimSuffix(p, sep)+sep)
 }
 
 // textOf returns a message content's text: a plain string, or the text

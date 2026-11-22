@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/romanpert/ainterlinked/internal/redact"
 	"github.com/romanpert/ainterlinked/internal/transcript"
 )
 
@@ -45,6 +46,7 @@ type HandoverReq struct {
 	Agent string `json:"agent"`
 	ID    int64  `json:"id,omitempty"`
 	Taken bool   `json:"taken,omitempty"` // list the ones this agent took over instead
+	Start bool   `json:"start,omitempty"` // the list for a session's start: as many as the user's handover_offers
 }
 
 // HandoverNoteReq leaves the agent's own handover for its session.
@@ -58,11 +60,11 @@ const (
 	sourceAgent = "agent"
 	// maxNote bounds a handover an agent writes itself.
 	maxNote = 16000
-	// handoversShown bounds the lines a session gets at its start.
-	handoversShown = 3
-	// handoverWindow is how far back the hub writes handovers of sessions
-	// that left, and how far back they are offered.
-	handoverWindow = 7 * 24 * time.Hour
+	// handoversListed bounds the handover tool's list.
+	handoversListed = 10
+	// handoverWindow is how far back handovers are offered (as long as
+	// they are kept: Retention).
+	handoverWindow = Retention
 )
 
 // LeaveHandover records the agent's own handover of its current session.
@@ -85,7 +87,11 @@ func (s *Store) LeaveHandover(ctx context.Context, r HandoverNoteReq) (Handover,
 
 // saveHandover stores h as the handover of that session, replacing the
 // previous one, except that an automatic one never replaces an agent's own.
+// Credential-looking text is hidden first: a handover is read by other
+// sessions, possibly of other providers. The gist is one line of text.
 func (s *Store) saveHandover(ctx context.Context, h Handover, session string) error {
+	h.Body = redact.Secrets(h.Body)
+	h.Gist = oneLine(redact.Secrets(h.Gist), 160)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO handovers(agent_id,session_id,name,harness,machine,project_path,branch,source,gist,body,created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(agent_id,session_id) DO UPDATE SET name=excluded.name, branch=excluded.branch, source=excluded.source,
@@ -96,10 +102,16 @@ func (s *Store) saveHandover(ctx context.Context, h Handover, session string) er
 }
 
 // WriteHandovers writes the handovers of up to n sessions that have left
-// since their last one was written, from their transcripts. Only the hub
-// process calls it (it reads transcripts); it returns how many it wrote.
-func (s *Store) WriteHandovers(ctx context.Context, n int, read func(harness, session string) (transcript.Handover, bool)) (int, error) {
-	since := s.now().Add(-handoverWindow).UnixMilli()
+// since their last one was written, from their transcripts, as far back as
+// the user's handover_days (0: it writes none). Only the hub process calls
+// it (it reads transcripts); it returns how many it wrote. A transcript is
+// read only for the checkout the agent registered from (read checks it).
+func (s *Store) WriteHandovers(ctx context.Context, n int, read func(harness, session, project string) (transcript.Handover, bool)) (int, error) {
+	days := s.lim().HandoverDays
+	if days == 0 {
+		return 0, nil
+	}
+	since := s.now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.name,a.harness,a.machine,a.project_path,a.branch,a.session_id FROM agents a
 		LEFT JOIN handovers h ON h.agent_id=a.id AND h.session_id=a.session_id
 		WHERE a.online=0 AND a.session_id<>'' AND a.project_path<>'' AND a.harness<>'human' AND a.last_seen>=?
@@ -124,7 +136,7 @@ func (s *Store) WriteHandovers(ctx context.Context, n int, read func(harness, se
 	rows.Close()
 	wrote := 0
 	for _, l := range todo {
-		got, ok := read(l.h.Harness, l.session)
+		got, ok := read(l.h.Harness, l.session, l.h.ProjectPath)
 		h := l.h
 		h.Source = sourceAuto
 		if ok {
@@ -149,15 +161,19 @@ func (s *Store) Handovers(ctx context.Context, r HandoverReq) ([]Handover, error
 	if err != nil {
 		return nil, err
 	}
-	if me.ProjectPath == "" {
+	limit := handoversListed
+	if r.Start {
+		limit = s.lim().HandoverOffers
+	}
+	if me.ProjectPath == "" || limit == 0 {
 		return nil, nil
 	}
 	q, args := `SELECT `+handoverCols+` FROM handovers h LEFT JOIN agents a ON a.id=h.agent_id
 		WHERE h.machine=? AND h.project_path=? AND h.body<>'' AND h.taken_by='' AND h.agent_id<>? AND coalesce(a.online,0)=0 AND h.created_at>=?
 		ORDER BY h.branch=? DESC, h.created_at DESC LIMIT ?`,
-		[]any{me.Machine, me.ProjectPath, me.ID, s.now().Add(-handoverWindow).UnixMilli(), me.Branch, handoversShown}
+		[]any{me.Machine, me.ProjectPath, me.ID, s.now().Add(-handoverWindow).UnixMilli(), me.Branch, limit}
 	if r.Taken {
-		q, args = `SELECT `+handoverCols+` FROM handovers h WHERE h.taken_by=? AND h.body<>'' ORDER BY h.created_at DESC LIMIT ?`, []any{me.ID, handoversShown}
+		q, args = `SELECT `+handoverCols+` FROM handovers h WHERE h.taken_by=? AND h.body<>'' ORDER BY h.created_at DESC LIMIT ?`, []any{me.ID, limit}
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

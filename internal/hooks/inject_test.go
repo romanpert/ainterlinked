@@ -169,7 +169,7 @@ func TestBudgetNeverLosesMessages(t *testing.T) {
 	e.as("1", "claude-code", "SessionStart", nil)
 	e.as("2", "codex", "SessionStart", nil)
 	e.prefs("1", core.PrefsReq{MaxChars: 1000, MaxMessages: 10, InlineChars: 40000}) // whole bodies: the budget cuts
-	e.send("2", "1", strings.Repeat("á", 900)) // multi-byte: the cut must not split a rune
+	e.send("2", "1", strings.Repeat("á", 900))                                       // multi-byte: the cut must not split a rune
 	e.send("2", "1", "short one")
 	got := tool(e, "1")
 	if !strings.Contains(got, "get_thread") || strings.Contains(got, "short one") {
