@@ -133,7 +133,9 @@ Then run `ainterlinked install claude-code` and restart the open sessions (Codex
 - **Claude Code**: a background hook waits while the session is idle and wakes it ([`asyncRewake`](https://code.claude.com/docs/en/hooks)). It is a small process per idle session, and it ends when the session works again or closes, or after a day. It runs in the terminal, VS Code and the desktop app, never in `claude -p` or an SDK script, where it would hold the session open. A Claude Code too old to know `asyncRewake` would run it in the foreground, so update first.
 - **Codex**: the hub runs `codex queue` (0.157 or later) with a notice that mail is waiting. The mail itself arrives through Codex's hook and never on a command line.
 
-Group mail never wakes anyone, nor does mail for an agent that set `inject=manual`. A session is woken at most `max_holds` times between two of your prompts, 30 times an hour, and never past your spend cap. What an agent does in such a turn doesn't count as your order. This has been tested with the bus and simulated harnesses, not yet against a live Claude Code or Codex.
+Group mail never wakes anyone, nor does mail for an agent that set `inject=manual`. A session is woken at most `max_holds` times between two of your prompts, 30 times an hour, and never past your spend cap. What an agent does in such a turn doesn't count as your order.
+
+Run live on 23 November 2026. Claude Code 2.1.330 was run as the VS Code extension runs it (`node scripts/wake-live.mjs`). A message by name woke the idle session, which replied in 8 s; a group message didn't wake it; with `max_holds = 2` a third message waited for the next prompt and was answered there; nothing was left running after the session closed. Codex 0.171 was run as the IDE runs it, through `codex app-server` (`node scripts/codex-wake-live.mjs`): the hub's `codex queue` started a turn in the idle thread by itself, and it replied in 8 s.
 
 ## Measured in use
 
@@ -241,14 +243,16 @@ Version 0.1, beta. Works today:
 
 - Unit tests and a real-process end-to-end test (`node scripts/e2e.mjs`) pass on Windows. CI runs both on Linux, macOS and Windows.
 - A live test against a real Claude Code session (`node scripts/claude-live.mjs`) passes. It covers hook injection, the stop-hold continuation and MCP replies.
+- A live run of the Antigravity CLI (`node scripts/antigravity-live.mjs`) passes: messages both ways, the stop-hold continuation, an edit of a held file refused.
 - A live run of Claude Code and Codex on one project (`node scripts/cross-live.mjs`) passes: messages both ways, a task claimed once, an edit refused and handed over.
+- Live runs of waking idle sessions pass in Claude Code (`node scripts/wake-live.mjs`) and Codex (`node scripts/codex-wake-live.mjs`).
 
 Known limits:
 
 - An idle session in a turn-tier harness gets its mail at the next prompt or tool call, not instantly. Only push-tier harnesses wake up.
 - Agents that live in someone's cloud (Grok Bot and similar) can't join: the hub is this machine's, and they don't take MCP servers on localhost.
 - Codex desktop and similar apps that host several conversations in one process show up as one agent.
-- Hook formats for VS Code agent hooks, Copilot, Cursor, Gemini, Antigravity, Muse Code and Grok Build follow their current docs or source but are not yet verified live.
+- Hook formats for VS Code agent hooks, Copilot, Cursor, Gemini, the Antigravity app and IDE, Muse Code and Grok Build follow their current docs or source but are not yet verified live.
 - Reservations are enforced only where the harness has a pre-tool hook. Elsewhere they are advisory.
 - A message counts as read as soon as ainterlinked hands it to the harness. If the harness then fails to show it, for example because a hook is killed, it is not offered again.
 - Mobile layout of the dashboard is not verified on a real phone.

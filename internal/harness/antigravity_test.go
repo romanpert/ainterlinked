@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -21,8 +23,20 @@ func TestAntigravityInstallAndUninstall(t *testing.T) {
 		t.Fatalf("the user's hook is gone:\n%s", src)
 	}
 	// A matcher for the tools that write; the other events take none.
-	if v, ok := jsonc.Get(src, Server, "PreToolUse", jsonc.Index(0), "matcher"); !ok || !strings.Contains(string(v), "write_to_file|replace_file_content|") {
-		t.Fatalf("PreToolUse:\n%s", src)
+	v, _ := jsonc.Get(src, Server, "PreToolUse", jsonc.Index(0), "matcher")
+	var matcher string
+	_ = json.Unmarshal(v, &matcher)
+	re, err := regexp.Compile("^(?:" + matcher + ")$") // it may match all of the name or a part
+	if err != nil || matcher == "" {
+		t.Fatalf("PreToolUse: %v\n%s", err, src)
+	}
+	for tool, want := range map[string]bool{
+		"write_file": true, "write_to_file": true, "replace_file_content": true, "multi_replace_file_content": true, "edit_file": true, "sed_file": true, "notebook_edit": true,
+		"read_file": false, "view_file": false, "list_dir": false, "run_command": false, "call_mcp_tool": false, "grep_search": false,
+	} {
+		if re.MatchString(tool) != want {
+			t.Errorf("%s: %v", tool, !want)
+		}
 	}
 	if _, ok := jsonc.Get(src, Server, "Stop", jsonc.Index(0), "command"); !ok {
 		t.Fatalf("Stop takes its handlers directly:\n%s", src)

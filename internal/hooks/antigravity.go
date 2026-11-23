@@ -4,14 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/romanpert/ainterlinked/internal/config"
-	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 // parseAntigravity reads what Antigravity names its own way.
@@ -38,7 +38,7 @@ func parseAntigravity(m map[string]any, in *Input) {
 	for k, v := range args {
 		in.ToolInput[k] = v
 	}
-	for ours, theirs := range map[string][]string{"file_path": {"TargetFile", "AbsolutePath"}, "command": {"CommandLine"}} {
+	for ours, theirs := range map[string][]string{"file_path": {"TargetFile", "AbsolutePath", "Path"}, "command": {"CommandLine"}} {
 		if v := str(args, theirs...); v != "" {
 			in.ToolInput[ours] = v
 		}
@@ -75,6 +75,18 @@ func antigravityNothing(kind Kind) map[string]any {
 	return map[string]any{}
 }
 
+// endedWell says whether a turn ended because the model was done. The docs
+// call that model_stop; the CLI sends NO_TOOL_CALL.
+func endedWell(in Input) bool {
+	switch strings.ToLower(str(in.raw, "terminationReason")) {
+	case "": // another harness
+		return true
+	case "model_stop", "no_tool_call":
+		return str(in.raw, "error") == ""
+	}
+	return false
+}
+
 // conversation is what is known of one of an agent's conversations.
 type conversation struct {
 	Input string `json:"input"` // hash of the latest input
@@ -91,87 +103,135 @@ const maxConversations = 32
 // subagent starts right after a model call of whoever starts it.
 const openFor = 10 * time.Minute
 
-func conversationsPath(agent string) string {
-	return filepath.Join(config.Home(), "prompts", filepath.Base(agent)+".json")
+// conversationPath is a conversation's own file: the app runs the hooks of
+// several at the same time, and none waits for another or writes over it.
+func conversationPath(agent, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return filepath.Join(config.Home(), "prompts", filepath.Base(agent), hex.EncodeToString(sum[:8])+".json")
 }
 
-func conversations(agent string) map[string]conversation {
-	seen := map[string]conversation{}
-	if b, err := os.ReadFile(conversationsPath(agent)); err == nil {
-		_ = json.Unmarshal(b, &seen)
-	}
-	if seen == nil {
-		seen = map[string]conversation{}
-	}
-	return seen
-}
-
-func saveConversations(agent string, seen map[string]conversation) error {
-	for len(seen) > maxConversations {
-		oldest := ""
-		for id, c := range seen {
-			if oldest == "" || c.Seen < seen[oldest].Seen {
-				oldest = id
-			}
+// readConversation says whether the conversation in p is known. One whose
+// file is spoilt, or can't be read now (an error too), is taken for a
+// subagent's, under way since the file was written.
+func readConversation(p string) (c conversation, known bool, err error) {
+	var b []byte
+	for range 3 { // Windows refuses it while another hook replaces it
+		if b, err = os.ReadFile(p); err == nil || errors.Is(err, fs.ErrNotExist) {
+			break
 		}
-		delete(seen, oldest)
+		time.Sleep(10 * time.Millisecond)
 	}
-	b, err := json.Marshal(seen)
+	if errors.Is(err, fs.ErrNotExist) {
+		return c, false, nil
+	}
+	if err == nil && json.Unmarshal(b, &c) == nil {
+		return c, true, nil
+	}
+	seen := time.Now()
+	if st, e := os.Stat(p); e == nil {
+		seen = st.ModTime()
+	}
+	return conversation{Other: true, Open: true, Seen: seen.Unix()}, true, err
+}
+
+// conversations are all the agent's, by file.
+func conversations(agent string) (map[string]conversation, error) {
+	dir := filepath.Dir(conversationPath(agent, ""))
+	files, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	out := map[string]conversation{}
+	for _, f := range files {
+		p := filepath.Join(dir, f.Name())
+		if filepath.Ext(p) != ".json" {
+			continue
+		}
+		if c, known, _ := readConversation(p); known {
+			out[p] = c
+		}
+	}
+	return out, nil
+}
+
+// saveConversation replaces the file whole: a hook that is killed halfway
+// leaves the old one.
+func saveConversation(p string, c conversation) error {
+	b, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	p := conversationsPath(agent)
-	// A new file in its place: a process that ends halfway leaves the old one.
-	if err := os.WriteFile(p+".tmp", b, 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	return os.Rename(p+".tmp", p)
+	tmp, err := os.CreateTemp(filepath.Dir(p), "*.tmp")
+	if err != nil {
+		return err
+	}
+	_, err = tmp.Write(b)
+	if e := tmp.Close(); err == nil {
+		err = e
+	}
+	if err == nil && os.Rename(tmp.Name(), p) == nil {
+		return nil
+	}
+	_ = os.Remove(tmp.Name())
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o600) // Windows: another hook is reading it
 }
 
-// lockWait is how long a hook waits for the others of its app.
-const lockWait = 3 * time.Second
-
-// lockConversations keeps the other hooks of this agent's app, which runs
-// them at the same time, from writing over what this one reads and saves.
-func lockConversations(agent string) (io.Closer, error) {
-	p := conversationsPath(agent)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return nil, err
+// forgetOldest keeps the latest maxConversations of these.
+func forgetOldest(seen map[string]conversation) {
+	for len(seen) > maxConversations {
+		oldest := ""
+		for p, c := range seen {
+			if oldest == "" || c.Seen < seen[oldest].Seen {
+				oldest = p
+			}
+		}
+		_ = os.Remove(oldest)
+		delete(seen, oldest)
 	}
-	return hub.Lock(p+".lock", lockWait)
 }
 
 // userPrompted says whether a model call starts a prompt of the user's.
 // Antigravity has no hook for that, only one before every call, so it is the
-// user's when the latest input is new and isn't ainterlinked's. Nothing in it
-// marks a subagent either: a conversation that appeared while another one's
-// turn was under way, or while peers held the agent's turn, is taken for one
-// and never counts, or peers could keep the agent going forever. That costs a
-// conversation the user opens meanwhile its reset, the safe side.
+// user's when the latest input is new and isn't ainterlinked's. (The briefing
+// is the latest input once it is in, so the first is seen on SessionStart.)
+// Nothing in it marks a subagent either: a conversation that appeared while
+// another one's turn was under way, or while peers held the agent's turn, is
+// taken for one and never counts, or peers could keep the agent going forever.
+// That costs a conversation the user opens meanwhile its reset, the safe side.
 func userPrompted(agent string, in Input) bool {
-	l, err := lockConversations(agent)
+	now, p := time.Now(), conversationPath(agent, in.SessionID)
+	c, known, err := readConversation(p)
 	if err != nil {
-		return false
+		return false // it isn't lost: the next call may read it
 	}
-	defer l.Close()
-	seen, now := conversations(agent), time.Now()
-	c, known := seen[in.SessionID]
 	if !known {
-		c.Other = Holds(agent) > 0 || underWay(seen, now)
+		seen, err := conversations(agent)
+		c.Other = err != nil || Holds(agent) > 0 || underWay(seen, now)
+		forgetOldest(seen)
 	}
 	fresh := false
-	if in.Prompt != "" && !in.Auto && !strings.Contains(in.Prompt, "[ainterlinked]") {
+	if hasInput(in) {
 		sum := sha256.Sum256([]byte(in.Prompt))
 		input := hex.EncodeToString(sum[:8])
 		fresh = input != c.Input
 		c.Input = input
 	}
 	c.Open, c.Seen = true, now.Unix()
-	seen[in.SessionID] = c
-	if saveConversations(agent, seen) != nil {
+	if saveConversation(p, c) != nil {
 		return false // the next call would look like a prompt again
 	}
 	return fresh && !c.Other
+}
+
+// hasInput says whether the latest input isn't of our own making.
+func hasInput(in Input) bool {
+	return in.Prompt != "" && !in.Auto && !strings.Contains(in.Prompt, "[ainterlinked]")
 }
 
 // underWay says whether any of these conversations is in the middle of a turn.
@@ -190,17 +250,9 @@ func turnOver(agent string, in Input) {
 	if idle, ok := in.raw["fullyIdle"].(bool); ok && !idle {
 		return
 	}
-	l, err := lockConversations(agent)
-	if err != nil {
-		return
+	p := conversationPath(agent, in.SessionID)
+	if c, known, err := readConversation(p); err == nil && known && c.Open {
+		c.Open = false
+		_ = saveConversation(p, c)
 	}
-	defer l.Close()
-	seen := conversations(agent)
-	c, known := seen[in.SessionID]
-	if !known || !c.Open {
-		return
-	}
-	c.Open = false
-	seen[in.SessionID] = c
-	_ = saveConversations(agent, seen)
 }

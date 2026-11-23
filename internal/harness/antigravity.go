@@ -14,7 +14,7 @@ func antigravity() *Harness {
 	hooks := func(e *Env) string { return e.path(".gemini", "config", "hooks.json") }
 	return &Harness{
 		ID: "antigravity", Name: "Antigravity", Tier: "turn", Hooks: true,
-		Notes: "Built from Antigravity's docs, not yet run against a real one. Conversations of one app process show up as one agent.",
+		Notes: "Run against the CLI (1.5.14); the app and the IDE share its config but weren't run. Conversations of one app process show up as one agent.",
 		detect: func(e *Env) []string {
 			return evidence(e, []string{"agy", "antigravity"}, e.path(".gemini", "config"), e.path(".gemini", "antigravity"),
 				e.path(".gemini", "antigravity-cli"), e.path(".gemini", "antigravity-ide"))
@@ -52,6 +52,11 @@ func antigravity() *Harness {
 	}
 }
 
+// antigravityEdits matches the tools that write files. The CLI's names change
+// with the model and aren't those of the docs (write_file for write_to_file),
+// so it goes by what they say they do.
+const antigravityEdits = ".*(write|edit|replace|patch|insert|create|delete|move|rename|sed_).*"
+
 func antigravityHooks(e *Env) map[string]any {
 	run := func(event string) map[string]any {
 		return map[string]any{"type": "command", "command": e.hookCmd("antigravity", event, false), "timeout": 15}
@@ -62,7 +67,7 @@ func antigravityHooks(e *Env) map[string]any {
 	return map[string]any{
 		"SessionStart":  []any{run("SessionStart")},
 		"PreInvocation": []any{run("PreInvocation")},
-		"PreToolUse":    tools("write_to_file|replace_file_content|multi_replace_file_content", "PreToolUse"),
+		"PreToolUse":    tools(antigravityEdits, "PreToolUse"),
 		"PostToolUse":   tools("*", "PostToolUse"),
 		"Stop":          []any{run("Stop")},
 	}

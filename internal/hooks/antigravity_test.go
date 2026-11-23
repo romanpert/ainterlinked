@@ -1,15 +1,19 @@
 package hooks
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/romanpert/ainterlinked/internal/config"
 	"github.com/romanpert/ainterlinked/internal/core"
 	"github.com/romanpert/ainterlinked/internal/hub"
 )
@@ -47,6 +51,16 @@ func TestAntigravityIsRefusedAReservedFile(t *testing.T) {
 		if s, _ := out["reason"].(string); out["decision"] != "deny" || !strings.Contains(s, "reserved") {
 			t.Errorf("%s: %v", tool, out)
 		}
+	}
+	// What Antigravity CLI 1.5.14 sends, which isn't what its docs say.
+	_, out := e.ag("PreToolUse", map[string]any{"toolCall": map[string]any{"id": "call_1", "name": "write_file", "args": map[string]any{
+		"Content": "CHANGED", "Overwrite": true, "Path": filepath.Join(e.dir, "src", "main.go")}}})
+	if out["decision"] != "deny" {
+		t.Errorf("write_file: %v", out)
+	}
+	_, out = e.ag("PreToolUse", map[string]any{"toolCall": map[string]any{"name": "read_file", "args": map[string]any{"Path": filepath.Join(e.dir, "src", "main.go")}}})
+	if out["decision"] != "allow" {
+		t.Errorf("a read: %v", out)
 	}
 	// Anything else is left to the user's own permissions: never auto_approve.
 	if _, out := e.ag("PreToolUse", call("write_to_file", "free.go")); out["decision"] != "allow" {
@@ -114,6 +128,15 @@ func TestAntigravityMail(t *testing.T) {
 	if _, out = e.ag("Stop", map[string]any{"terminationReason": "error"}); out["decision"] != "stop" {
 		t.Fatalf("an error isn't continued: %v", out)
 	}
+	for _, p := range []map[string]any{{"terminationReason": "max_steps_exceeded"}, {"terminationReason": "NO_TOOL_CALL", "error": "quota"}} {
+		if _, out = e.ag("Stop", p); out["decision"] != "stop" {
+			t.Fatalf("%v isn't continued: %v", p, out)
+		}
+	}
+	if _, out = e.ag("Stop", map[string]any{"terminationReason": "NO_TOOL_CALL", "error": "", "fullyIdle": true}); out["decision"] != "continue" {
+		t.Fatalf("Stop as the CLI sends it: %v", out)
+	}
+	e.send("2", "1", "third")
 	if _, out = e.ag("Stop", map[string]any{"terminationReason": "model_stop"}); out["decision"] != "continue" {
 		t.Fatalf("Stop: %v", out)
 	}
@@ -194,19 +217,98 @@ func TestAntigravityTurnsThatNeverStopped(t *testing.T) {
 	if !underWay(turn(openFor-time.Minute), now) || underWay(turn(openFor+time.Minute), now) {
 		t.Fatal("a turn with no Stop is under way for openFor")
 	}
-	seen := map[string]conversation{}
 	for i := range maxConversations + 1 {
-		seen[fmt.Sprint(i)] = conversation{Seen: int64(i)}
+		if err := saveConversation(conversationPath("x", fmt.Sprint(i)), conversation{Seen: int64(i)}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(conversationsPath("x")), 0o700); err != nil {
+	userPrompted("x", Input{SessionID: "new", Prompt: "build it"})
+	got, _ := conversations("x")
+	_, oldest := got[conversationPath("x", "0")]
+	if _, latest := got[conversationPath("x", "new")]; oldest || !latest || len(got) != maxConversations+1 {
+		t.Fatalf("kept %d, the oldest: %v, the new one: %v", len(got), oldest, latest)
+	}
+}
+
+func TestAntigravityConversationThatCantBeRead(t *testing.T) {
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
+	spoil := func(id string, ago time.Duration) string {
+		p := conversationPath("x", id)
+		if err := saveConversation(p, conversation{}); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now().Add(-ago)
+		if err := errors.Join(os.WriteFile(p, []byte(`{"input": "ab`), 0o600), os.Chtimes(p, at, at)); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	old := spoil("old", 24*time.Hour)
+	if !userPrompted("x", Input{SessionID: "first", Prompt: "build it"}) {
+		t.Error("a spoilt file from yesterday is a turn under way for ever")
+	}
+	turnOver("x", Input{SessionID: "first"})
+	half := spoil("half", 0)
+	if userPrompted("x", Input{SessionID: "new", Prompt: "look into X"}) {
+		t.Error("a conversation that appeared meanwhile passed as the user")
+	}
+	if userPrompted("x", Input{SessionID: "half", Prompt: "now into Y"}) {
+		t.Error("the one that can't be read passed as the user")
+	}
+	if c, _, _ := readConversation(half); !c.Other || c.Input == "" {
+		t.Errorf("the spoilt one isn't put right: %+v", c)
+	}
+	for i := range maxConversations + 1 {
+		_ = saveConversation(conversationPath("x", fmt.Sprint(i)), conversation{Seen: time.Now().Unix()})
+	}
+	userPrompted("x", Input{SessionID: "last", Prompt: "and Z"})
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the spoilt file is never forgotten")
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(old), "*.tmp")); len(left) > 0 {
+		t.Errorf("left behind: %v", left)
+	}
+}
+
+// A file that can't be read for now is neither the user's nor written over.
+func TestAntigravityConversationThatCantBeReadNow(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("nothing to refuse the read with")
+	}
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
+	p := conversationPath("x", "locked")
+	if err := errors.Join(saveConversation(p, conversation{Input: "i", Open: true}), os.Chmod(p, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveConversations("x", seen); err != nil {
+	if userPrompted("x", Input{SessionID: "locked", Prompt: "build it"}) {
+		t.Error("passed as the user")
+	}
+	turnOver("x", Input{SessionID: "locked"})
+	_ = os.Chmod(p, 0o600)
+	if c, _, err := readConversation(p); err != nil || c.Input != "i" || c.Other {
+		t.Errorf("%+v, %v", c, err)
+	}
+}
+
+// What is under way is told from the files whatever the folder is called, and
+// a folder that can't be listed says nothing about it.
+func TestAntigravityFolderThatCantBeListed(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home[1]")
+	t.Setenv("AINTERLINKED_HOME", home)
+	if !userPrompted("x", Input{SessionID: "main", Prompt: "build it"}) || userPrompted("x", Input{SessionID: "sub", Prompt: "look into X"}) {
+		t.Error("a subagent passed as the user")
+	}
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		return // nothing to refuse the listing with
+	}
+	dir := filepath.Dir(conversationPath("x", ""))
+	if err := os.Chmod(dir, 0o300); err != nil {
 		t.Fatal(err)
 	}
-	got := conversations("x")
-	if _, oldest := got["0"]; oldest || len(got) != maxConversations {
-		t.Fatalf("kept %d, the oldest: %v", len(got), oldest)
+	defer os.Chmod(dir, 0o700)
+	turnOver("x", Input{SessionID: "main"})
+	if userPrompted("x", Input{SessionID: "sub2", Prompt: "look into X"}) {
+		t.Error("passed as the user")
 	}
 }
 
@@ -229,16 +331,126 @@ func TestAntigravityHooksAtTheSameTime(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	got := conversations("x")
 	for i := range n {
-		if c, ok := got[fmt.Sprint("sub", i)]; !ok || !c.Other {
+		if c, ok, _ := readConversation(conversationPath("x", fmt.Sprint("sub", i))); !ok || !c.Other {
 			t.Errorf("subagent %d: %+v, known: %v", i, c, ok)
 		}
 	}
-	if c := got["main"]; c.Other || !c.Open {
+	if c, _, _ := readConversation(conversationPath("x", "main")); c.Other || !c.Open {
 		t.Errorf("the user's conversation: %+v", c)
 	}
-	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(conversationsPath("x")), "*.tmp")); len(left) > 0 {
-		t.Errorf("left behind: %v", left)
+}
+
+// The briefing put in on SessionStart is the last input from then on, so a
+// conversation's first prompt is seen on SessionStart or not at all.
+func TestAntigravityFirstPromptIsTheUsers(t *testing.T) {
+	e := setup(t)
+	e.ag("SessionStart", map[string]any{"lastUserInput": "build it"})
+	id := e.agent("1").ID
+	if c, _, _ := readConversation(conversationPath(id, conv)); c.Input == "" || c.Other {
+		t.Fatalf("the first prompt didn't count: %+v", c)
+	}
+	if a := e.agent("1"); a.Activity != "on a new request from the user" {
+		t.Fatalf("activity %q", a.Activity)
+	}
+	BumpHolds(id)
+	for _, in := range []string{"[ainterlinked] You are ...", "build it"} {
+		if e.invoke(in); Holds(id) != 1 {
+			t.Fatalf("%q counted again", in)
+		}
+	}
+	// A subagent's start is nobody's prompt.
+	e.ag("SessionStart", map[string]any{"conversationId": "sub", "lastUserInput": "look into X"})
+	if c, _, _ := readConversation(conversationPath(id, "sub")); !c.Other || Holds(id) != 1 {
+		t.Fatalf("a subagent passed as the user: %+v", c)
+	}
+}
+
+// The hub learns whose turn it is from SessionStart too.
+func TestAntigravityFirstPromptStartsTheUsersTurn(t *testing.T) {
+	e := setup(t)
+	e.ag("SessionStart", nil)
+	id := e.agent("1").ID
+	if n, _ := e.c.Store.MarkTurn(context.Background(), core.TurnReq{Agent: id}); n != 1 { // peers held the last one open
+		t.Fatal(n)
+	}
+	// The agent's only conversation, so nothing else holds it.
+	e.ag("SessionStart", map[string]any{"lastUserInput": "build it"})
+	if n, _ := e.c.Store.MarkTurn(context.Background(), core.TurnReq{Agent: id}); n != 1 {
+		t.Fatalf("what it does now isn't on the user's order: %d", n)
+	}
+}
+
+// A conversation that only opened isn't a turn under way.
+func TestAntigravityStartWithNoPrompt(t *testing.T) {
+	e := setup(t)
+	e.ag("SessionStart", map[string]any{"lastUserInput": "[ainterlinked] You are ..."}) // resumed
+	e.ag("SessionStart", map[string]any{"conversationId": "second", "lastUserInput": "build it"})
+	if c, _, _ := readConversation(conversationPath(e.agent("1").ID, "second")); c.Other {
+		t.Fatal("the user's conversation was taken for a subagent's")
+	}
+}
+
+// With no briefing the first model call is the user's prompt, mail included.
+func TestAntigravityFirstCallWithNoBriefing(t *testing.T) {
+	e := setup(t)
+	e.cfg.Delivery.OnSessionStart, e.cfg.Delivery.OnTool = false, false
+	e.ag("SessionStart", map[string]any{"lastUserInput": "build it"})
+	e.as("2", "claude-code", "SessionStart", nil)
+	e.send("2", "1", "first")
+	if got := e.invoke("build it"); !strings.Contains(got, "first") {
+		t.Fatalf("injected %q", got)
+	}
+}
+
+// Antigravity refuses the tool when a hook on it doesn't answer, so a hook
+// with nothing to do still has to.
+func TestAntigravityAlwaysGetsAnAnswer(t *testing.T) {
+	e := setup(t)
+	off := e.cfg
+	off.Harnesses = map[string]config.HarnessCfg{"antigravity": {Enabled: false}}
+	for event, want := range map[string]string{"PreToolUse": "allow", "Stop": "stop"} {
+		var out bytes.Buffer
+		Run(context.Background(), off, "antigravity", event, strings.NewReader("{}"), &out)
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("%s of a harness switched off: %q", event, out.String())
+		}
+	}
+	var out bytes.Buffer
+	Run(context.Background(), off, "claude-code", "PreToolUse", strings.NewReader("{}"), &out)
+	if strings.Contains(out.String(), "decision") {
+		t.Errorf("others need none: %q", out.String())
+	}
+	// Nor does one that can't reach the hub.
+	t.Setenv("AINTERLINKED_HOME", filepath.Join(t.TempDir(), "file"))
+	if err := os.WriteFile(config.Home(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	Run(context.Background(), e.cfg, "antigravity", "PreToolUse", strings.NewReader("{}"), &out)
+	if !strings.Contains(out.String(), "allow") {
+		t.Errorf("with no hub: %q", out.String())
+	}
+}
+
+// Other harnesses' hooks see every tool: a read isn't an edit for its name.
+func TestSedFileIsAnEdit(t *testing.T) {
+	for tool, want := range map[string]int{"sed_file": 1, "mcp__x__sed_file": 1, "read_parsed_file": 0, "list_used_files": 0, "get_compressed_file": 0} {
+		if got := EditedFiles(Input{ToolName: tool, ToolInput: map[string]any{"file_path": "a.go"}}); len(got) != want {
+			t.Errorf("%s: %v", tool, got)
+		}
+	}
+}
+
+// A prompt the bus caused is work too, though not the user's.
+func TestAutoPromptIsWork(t *testing.T) {
+	e := setup(t)
+	e.as("1", "opencode", "SessionStart", nil)
+	id := e.agent("1").ID
+	_ = e.c.Call(context.Background(), "status", core.StatusReq{ID: id, State: "idle", Quiet: true}, nil)
+	BumpHolds(id)
+	e.as("1", "opencode", "UserPromptSubmit", map[string]any{"prompt": "go on", "ainterlinked_auto": true})
+	if a := e.agent("1"); a.State != "working" || Holds(id) != 1 {
+		t.Fatalf("state %q, holds %d", a.State, Holds(id))
 	}
 }

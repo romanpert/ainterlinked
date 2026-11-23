@@ -145,7 +145,7 @@ func firstOf(m map[string]any, keys ...string) any {
 	return nil
 }
 
-var editTool = regexp.MustCompile(`(?i)(edit|write|patch|replace|create|delete|move|rename|notebook|str_replace|insert)`)
+var editTool = regexp.MustCompile(`(?i)(edit|write|patch|replace|create|delete|move|rename|notebook|str_replace|insert|(?:^|[^a-z])sed_file)`)
 
 var patchFile = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$`)
 
@@ -227,6 +227,13 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 	}()
 	kind := Normalize(event)
 	harness, run := runsAs(harness)
+	answered := false
+	defer func() {
+		// Antigravity refuses the tool when a hook on it says nothing.
+		if !answered && harness == "antigravity" {
+			Write(stdout, harness, event, kind, Result{})
+		}
+	}()
 	if kind == "" || !run || !cfg.HarnessEnabled(harness) {
 		return
 	}
@@ -268,6 +275,7 @@ func Run(ctx context.Context, cfg config.Config, harness, event string, stdin io
 			logf("hook %s %s: %v", harness, event, o.err)
 			return
 		}
+		answered = true
 		Write(stdout, harness, event, kind, o.res)
 	case <-ctx.Done():
 		logf("hook %s %s: gave up after %s (hub open after %dms)", harness, event, Budget, opened.Load())
@@ -350,6 +358,9 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if !d.OnSessionStart || !ctxOK {
 			return Result{}, nil
 		}
+		if harness == "antigravity" && hasInput(in) && userPrompted(me.ID, in) {
+			userTurn(ctx, c, me.ID, cfg, in)
+		}
 		return Result{Context: briefing(ctx, c, me, cfg, prefs())}, nil
 
 	case Prompt:
@@ -359,20 +370,13 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		if at != AtPrompt {
 			// Another model call of the same turn.
 		} else if !in.Auto {
-			ResetHolds(me.ID)
-			// The hub keeps who started the turn: what the agent does now is
-			// on the user's order.
-			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, User: true}, nil)
+			userTurn(ctx, c, me.ID, cfg, in)
 		} else if in.Woken && harness == "codex" {
 			BumpHolds(me.ID) // the hub queued it; here it counts against the same limit
 			_ = c.Call(ctx, "turn", core.TurnReq{Agent: me.ID, Woken: true}, nil)
 		}
-		if at == AtPrompt {
-			activity := "on a new request from the user"
-			if cfg.Presence.SharePrompts {
-				activity = activityFromPrompt(in.Prompt)
-			}
-			_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "working", Activity: activity, Quiet: true}, nil)
+		if at == AtPrompt && in.Auto {
+			working(ctx, c, me.ID, cfg, in)
 		}
 		if !ctxOK {
 			return Result{}, nil
@@ -445,7 +449,7 @@ func Handle(ctx context.Context, cfg config.Config, c hub.Client, harness, event
 		}
 		_ = c.Call(ctx, "status", core.StatusReq{ID: me.ID, State: "idle", Quiet: true}, nil)
 		// A turn that ended in an error isn't kept going into it again.
-		if why := str(in.raw, "terminationReason"); why != "" && why != "model_stop" {
+		if !endedWell(in) {
 			return Result{}, nil
 		}
 		if in.LoopCount >= 5 || cfg.Limits.HeldOut(Holds(me.ID)) || !canSay(harness, event, kind, Result{Block: "x"}) {
@@ -513,6 +517,22 @@ func BumpHolds(id string) {
 
 // ResetHolds is called when the user prompts.
 func ResetHolds(id string) { _ = os.Remove(holdsPath(id)) }
+
+// userTurn notes that the user started a turn: the hub keeps it, so what the
+// agent does now is on the user's order.
+func userTurn(ctx context.Context, c hub.Client, id string, cfg config.Config, in Input) {
+	ResetHolds(id)
+	_ = c.Call(ctx, "turn", core.TurnReq{Agent: id, User: true}, nil)
+	working(ctx, c, id, cfg, in)
+}
+
+func working(ctx context.Context, c hub.Client, id string, cfg config.Config, in Input) {
+	activity := "on a new request from the user"
+	if cfg.Presence.SharePrompts {
+		activity = activityFromPrompt(in.Prompt)
+	}
+	_ = c.Call(ctx, "status", core.StatusReq{ID: id, State: "working", Activity: activity, Quiet: true}, nil)
+}
 
 func holdsPath(id string) string { return filepath.Join(config.Home(), "holds", filepath.Base(id)) }
 
