@@ -11,7 +11,7 @@ The **Verified** column says how each integration was checked:
 | Harness | MCP config | Hooks | Delivery | Verified |
 |---|---|---|---|---|
 | Claude Code | `claude mcp add-json --scope user` (writes `~/.claude.json`) | `~/.claude/settings.json` | turn; push with `wake_idle` (not yet live) or `ainterlinked launch claude` | live (Claude Code 2.1.287: SessionStart briefing, PostToolUse injection, Stop-hold, MCP tools) |
-| OpenAI Codex | `~/.codex/config.toml` `[mcp_servers.ainterlinked]` | `~/.codex/hooks.json` | turn; push with `wake_idle` (not yet live) | docs + e2e (same output contract as Claude Code) |
+| OpenAI Codex | `~/.codex/config.toml` `[mcp_servers.ainterlinked]` | `~/.codex/hooks.json` | turn; push with `wake_idle` (not yet live) | live (Codex CLI 0.171: MCP tools, messages both ways, edit refused before it happens, Stop-hold, queue hand-over; `scripts/cross-live.mjs`) |
 | GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `~/.copilot/hooks/ainterlinked.json` | turn | docs |
 | VS Code (Copilot agent) | `<VS Code user dir>/mcp.json` `servers` | shares `~/.copilot/hooks/` (VS Code agent hooks are a preview feature) | turn, or pull without hooks | docs |
 | Cursor | `~/.cursor/mcp.json` | `~/.cursor/hooks.json` | turn | docs |

@@ -23,7 +23,7 @@ DIST_NAME = "ainterlinked"  # PyPI name
 PKG = "ainterlinked"  # import package (python -m ainterlinked)
 GO_MAIN = "./cmd/ainterlinked"
 LDFLAG_VERSION = "github.com/romanpert/ainterlinked/internal/cli.Version"
-SUMMARY = "Real-time bus for AI coding agents across harnesses: Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode and more"
+SUMMARY = "Many AI coding agents in one repository without stepping on each other: Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode and more"
 
 # goos, goarch -> wheel platform tags (Go binaries are static: one wheel covers glibc and musl).
 TARGETS = {
@@ -63,7 +63,7 @@ def metadata(version: str) -> str:
         "Project-URL: Source, https://github.com/romanpert/ainterlinked",
         "Project-URL: Issues, https://github.com/romanpert/ainterlinked/issues",
         "License: Apache-2.0",
-        "Keywords: ai,agents,mcp,claude-code,codex,copilot,cursor,gemini,opencode,multi-agent",
+        "Keywords: ai,agents,mcp,claude-code,codex,copilot,cursor,gemini,opencode,antigravity,muse-code,grok-build,multi-agent,coordination,file-locking",
         "Classifier: Development Status :: 4 - Beta",
         "Classifier: Environment :: Console",
         "Classifier: Intended Audience :: Developers",
@@ -79,7 +79,7 @@ def metadata(version: str) -> str:
     return "\n".join(lines)
 
 
-INIT = '''"""ainterlinked: real-time bus for AI coding agents. The work is done by the
+INIT = '''"""ainterlinked: many AI coding agents in one repository. The work is done by the
 bundled `ainterlinked` executable; this module only locates and runs it."""
 import os
 import sys

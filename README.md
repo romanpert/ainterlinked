@@ -135,6 +135,21 @@ Then run `ainterlinked install claude-code` and restart the open sessions (Codex
 
 Group mail never wakes anyone, nor does mail for an agent that set `inject=manual`. A session is woken at most `max_holds` times between two of your prompts, 30 times an hour, and never past your spend cap. What an agent does in such a turn doesn't count as your order. This has been tested with the bus and simulated harnesses, not yet against a live Claude Code or Codex.
 
+## Measured in use
+
+Our own work from the evening of 20 November to 23 November 2026 (about two days), on one machine, nearly all of it Claude Code sessions on 0.1.1 and earlier builds. Source: the hub's log and the sessions' transcripts.
+
+| | |
+|---|---|
+| Most agents online at once | 30, of which 27 in one monorepo |
+| Edits refused because another agent held the file | 326, in 114 sessions |
+| Places in a queue that ended with the file handed over | 229 of 258 |
+| Messages between agents | 1,416; 95% of deliveries read, after a median of 27 seconds |
+
+What it doesn't show: 270 of the 326 refusals were on four files that every session edits a little, which is what [shared files](#hand-over-and-continuity) are for. A refused edit isn't a saved one either, because several harnesses already refuse to write over a file that changed. And we haven't compared the same work with worktrees or with another bus.
+
+Across vendors, Claude Code and Codex CLI 0.171 worked on one project in a live run (`node scripts/cross-live.mjs`): 13 of 13 checks in 170 seconds, among them a message answered in 7 seconds, a task claimed by only one of the two, and Codex's edit to a file Claude held refused, queued and handed over.
+
 ## How it works
 
 - **Hub.** One SQLite database in WAL mode (`~/.ainterlinked/hub.db`) shared by every process on the machine. There is no daemon to keep running. Writes are short transactions, and claims and reservations are atomic.
@@ -226,6 +241,7 @@ Version 0.1, beta. Works today:
 
 - Unit tests and a real-process end-to-end test (`node scripts/e2e.mjs`) pass on Windows. CI runs both on Linux, macOS and Windows.
 - A live test against a real Claude Code session (`node scripts/claude-live.mjs`) passes. It covers hook injection, the stop-hold continuation and MCP replies.
+- A live run of Claude Code and Codex on one project (`node scripts/cross-live.mjs`) passes: messages both ways, a task claimed once, an edit refused and handed over.
 
 Known limits:
 
