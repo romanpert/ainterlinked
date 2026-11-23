@@ -3,8 +3,10 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,11 +198,47 @@ func TestAntigravityTurnsThatNeverStopped(t *testing.T) {
 	for i := range maxConversations + 1 {
 		seen[fmt.Sprint(i)] = conversation{Seen: int64(i)}
 	}
+	if err := os.MkdirAll(filepath.Dir(conversationsPath("x")), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := saveConversations("x", seen); err != nil {
 		t.Fatal(err)
 	}
 	got := conversations("x")
 	if _, oldest := got["0"]; oldest || len(got) != maxConversations {
 		t.Fatalf("kept %d, the oldest: %v", len(got), oldest)
+	}
+}
+
+// An app runs hooks of several conversations at the same time: none may lose
+// another's mark, or a subagent could pass as the user.
+func TestAntigravityHooksAtTheSameTime(t *testing.T) {
+	t.Setenv("AINTERLINKED_HOME", t.TempDir())
+	const n = 12
+	if !userPrompted("x", Input{SessionID: "main", Prompt: "build it"}) {
+		t.Fatal("the user's first prompt")
+	}
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if userPrompted("x", Input{SessionID: fmt.Sprint("sub", i), Prompt: "look into it"}) {
+				t.Errorf("subagent %d passed as the user", i)
+			}
+		}()
+	}
+	wg.Wait()
+	got := conversations("x")
+	for i := range n {
+		if c, ok := got[fmt.Sprint("sub", i)]; !ok || !c.Other {
+			t.Errorf("subagent %d: %+v, known: %v", i, c, ok)
+		}
+	}
+	if c := got["main"]; c.Other || !c.Open {
+		t.Errorf("the user's conversation: %+v", c)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(conversationsPath("x")), "*.tmp")); len(left) > 0 {
+		t.Errorf("left behind: %v", left)
 	}
 }

@@ -4,12 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/romanpert/ainterlinked/internal/config"
+	"github.com/romanpert/ainterlinked/internal/hub"
 )
 
 // parseAntigravity reads what Antigravity names its own way.
@@ -119,10 +121,24 @@ func saveConversations(agent string, seen map[string]conversation) error {
 		return err
 	}
 	p := conversationsPath(agent)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	// A new file in its place: a process that ends halfway leaves the old one.
+	if err := os.WriteFile(p+".tmp", b, 0o600); err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	return os.Rename(p+".tmp", p)
+}
+
+// lockWait is how long a hook waits for the others of its app.
+const lockWait = 3 * time.Second
+
+// lockConversations keeps the other hooks of this agent's app, which runs
+// them at the same time, from writing over what this one reads and saves.
+func lockConversations(agent string) (io.Closer, error) {
+	p := conversationsPath(agent)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return nil, err
+	}
+	return hub.Lock(p+".lock", lockWait)
 }
 
 // userPrompted says whether a model call starts a prompt of the user's.
@@ -133,6 +149,11 @@ func saveConversations(agent string, seen map[string]conversation) error {
 // and never counts, or peers could keep the agent going forever. That costs a
 // conversation the user opens meanwhile its reset, the safe side.
 func userPrompted(agent string, in Input) bool {
+	l, err := lockConversations(agent)
+	if err != nil {
+		return false
+	}
+	defer l.Close()
 	seen, now := conversations(agent), time.Now()
 	c, known := seen[in.SessionID]
 	if !known {
@@ -169,6 +190,11 @@ func turnOver(agent string, in Input) {
 	if idle, ok := in.raw["fullyIdle"].(bool); ok && !idle {
 		return
 	}
+	l, err := lockConversations(agent)
+	if err != nil {
+		return
+	}
+	defer l.Close()
 	seen := conversations(agent)
 	c, known := seen[in.SessionID]
 	if !known || !c.Open {
