@@ -37,7 +37,7 @@ func TestTasksBoardSearchAndArchive(t *testing.T) {
 	}
 	out, errOut, code := cli(t, "", "tasks", "archive")
 	if code != 0 || !strings.Contains(out, "Archived 1 closed task(s)") || !strings.Contains(out, "#2 → ") ||
-		!strings.Contains(mustRead(t, filepath.Join(home, "archive", "web.md")), "Result: shipped") {
+		!strings.Contains(mustRead(t, filepath.Join(home, "archive", "web.md")), "Result:\n\n> shipped") {
 		t.Fatalf("archive: %q %q", out, errOut)
 	}
 	if out, _, _ = cli(t, "", "tasks"); strings.Contains(out, "closed") {

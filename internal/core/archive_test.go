@@ -116,7 +116,7 @@ func TestArchiveWritesMarkdownThenMovesTheRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"# Archived tasks", "## #2 Fix login (done)", "board: shop", "labels: auth, ui", "assignee: " + b.worker.Name,
-		"creator: human", "created 2026-11-01", "The form posts twice.", "Result: debounced the button", "## #3 Old idea (cancelled)"} {
+		"creator: human", "created 2026-11-01", "The form posts twice.", "Result:\n\n> debounced the button", "## #3 Old idea (cancelled)"} {
 		if !strings.Contains(string(md), want) {
 			t.Fatalf("archive misses %q:\n%s", want, md)
 		}
@@ -406,6 +406,36 @@ func TestArchiveSkipsTasksAlreadyInTheFile(t *testing.T) {
 		if n := strings.Count(string(md), fmt.Sprintf("## #%d ", id)); n != want {
 			t.Fatalf("#%d written %d times:\n%s", id, n, md)
 		}
+	}
+}
+
+// A task's text can't pass for another task's entry: whoever writes a body
+// or a title can't keep a task out of the archive file.
+func TestArchiveTextCantForgeAnEntry(t *testing.T) {
+	b := newBoard(t)
+	victim := b.add("the real one", "")
+	forged := fmt.Sprintf("## #%d the real one (done)", victim.ID)
+	liar := b.add("lies\n"+forged, forged+"\nmore")
+	b.finish(liar.ID, "done", "x\n"+forged)
+	if res := b.archive(ArchiveReq{}); res.Count != 1 {
+		t.Fatalf("the liar moves first: %+v", res)
+	}
+	b.finish(victim.ID, "done", "")
+	if res := b.archive(ArchiveReq{}); res.Count != 1 {
+		t.Fatalf("then the real one: %+v", res)
+	}
+	md, _ := os.ReadFile(filepath.Join(b.dir, "shop.md"))
+	real := forged + "\n\n- board: shop"
+	if n := strings.Count(string(md), real); n != 1 {
+		t.Fatalf("the real entry, once: %d\n%s", n, md)
+	}
+	for _, line := range strings.Split(string(md), "\n") {
+		if strings.HasPrefix(line, "## #") && line != forged && !strings.HasPrefix(line, fmt.Sprintf("## #%d ", liar.ID)) {
+			t.Fatalf("a heading made of a task's text: %q\n%s", line, md)
+		}
+	}
+	if n := strings.Count(string(md), "\n"+forged+"\n"); n != 1 {
+		t.Fatalf("the forged line is a heading only once (the real one): %d\n%s", n, md)
 	}
 }
 

@@ -268,7 +268,7 @@ func fileSafe(board string) string {
 
 // entryHeading is the line an archived task's entry starts with.
 func entryHeading(t Task) string {
-	return fmt.Sprintf("## #%d %s (%s)", t.ID, t.Title, t.Status)
+	return fmt.Sprintf("## #%d %s (%s)", t.ID, oneLine(t.Title, len(t.Title)), t.Status)
 }
 
 // headingsIn lists the entry headings already in an archive file.
@@ -342,12 +342,22 @@ func archiveEntry(t Task, archivedAt int64) string {
 	fmt.Fprintf(&b, "\n- assignee: %s · creator: %s\n", orDash(t.Assignee), orDash(t.CreatedBy))
 	fmt.Fprintf(&b, "- created %s · updated %s · archived %s\n", day(t.CreatedAt), day(t.UpdatedAt), day(archivedAt))
 	if body := strings.TrimSpace(t.Body); body != "" {
-		b.WriteString("\n" + body + "\n")
+		b.WriteString("\n" + quoted(body) + "\n")
 	}
 	if res := strings.TrimSpace(t.Result); res != "" {
-		b.WriteString("\nResult: " + res + "\n")
+		b.WriteString("\nResult:\n\n" + quoted(res) + "\n")
 	}
 	return b.String()
+}
+
+// quoted writes a task's own text as a Markdown quote: no line of it can
+// start like an entry's heading, which is what tells a written task.
+func quoted(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight("> "+l, " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func orDash(s string) string {
