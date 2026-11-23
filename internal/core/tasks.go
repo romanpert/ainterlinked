@@ -32,6 +32,9 @@ type Task struct {
 	Wanted int `json:"wanted,omitempty"`
 	// Terms are the conditions the holder accepted by claiming it.
 	Terms string `json:"terms,omitempty"`
+	// Untouched is how many whole days an open task has gone without an
+	// update (stale.go); 0 for a closed one.
+	Untouched int `json:"untouched_days,omitempty"`
 }
 
 // Tasks are property. A held task (it has an assignee) belongs to its
@@ -294,6 +297,7 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 	for i := range out {
 		out[i].Blocked = s.depsPending(ctx, nil, out[i].DependsOn)
 		out[i].Wanted = wanted[out[i].ID]
+		out[i].Untouched = s.untouchedDays(out[i])
 	}
 	return out, nil
 }
@@ -645,6 +649,10 @@ type Board struct {
 	Name   string         `json:"name"`
 	Counts map[string]int `json:"counts"`
 	Total  int            `json:"total"`
+	// Stale counts the open tasks untouched for StaleDays or more, when the
+	// user set [tasks] stale_after_days (stale.go).
+	Stale     int `json:"stale,omitempty"`
+	StaleDays int `json:"stale_days,omitempty"`
 }
 
 // Boards lists boards with task counts per status.
@@ -671,5 +679,9 @@ func (s *Store) Boards(ctx context.Context) ([]Board, error) {
 		out[i].Counts[st] = n
 		out[i].Total += n
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // the hub has one connection: free it for the next query
+	return out, s.countStale(ctx, out)
 }

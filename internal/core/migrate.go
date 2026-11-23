@@ -116,6 +116,10 @@ var addedColumns = []struct{ table, column, ddl string }{
 	{"agents", "key_hash", `ALTER TABLE agents ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`},
 	// v8: bodies longer than this arrive as a gist and a pointer (0: config's).
 	{"prefs", "inline_chars", `ALTER TABLE prefs ADD COLUMN inline_chars INTEGER NOT NULL DEFAULT 0`},
+	// v9: the updated_at of a task when it was last noticed as stale
+	// (stale.go): one notice per untouched stretch, and any update starts
+	// a new one.
+	{"tasks", "stale_noticed", `ALTER TABLE tasks ADD COLUMN stale_noticed INTEGER NOT NULL DEFAULT 0`},
 }
 
 // migrate brings db to the current schema.

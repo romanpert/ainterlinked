@@ -27,6 +27,7 @@ type Config struct {
 	Presence  Presence              `toml:"presence"`
 	Locks     Locks                 `toml:"locks"`
 	Limits    core.Limits           `toml:"limits"`
+	Tasks     Tasks                 `toml:"tasks"`
 	Covenant  Covenant              `toml:"covenant"`
 	Server    Server                `toml:"server"`
 	Harnesses map[string]HarnessCfg `toml:"harnesses"`
@@ -68,6 +69,21 @@ type Locks struct {
 	// "warn" (allow, but tell the model) or "off".
 	Enforce    string `toml:"enforce"`
 	TTLMinutes int    `toml:"ttl_minutes"`
+}
+
+// Tasks controls the task boards.
+type Tasks struct {
+	// StaleAfterDays: a todo, review or blocked task nobody updated for this
+	// many days gets one notice, to its creator or the human. 0: none.
+	StaleAfterDays int `toml:"stale_after_days"`
+}
+
+// Check refuses values that mean nothing.
+func (t Tasks) Check() error {
+	if t.StaleAfterDays < 0 || t.StaleAfterDays > 100_000 {
+		return fmt.Errorf("tasks.stale_after_days = %d: use 0 (off) to 100000", t.StaleAfterDays)
+	}
+	return nil
 }
 
 // Covenant controls how a repo's rules (.ainterlinked/covenant.md) reach agents.
@@ -176,6 +192,9 @@ func LoadFile() (Config, error) {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
 	if err := cfg.Limits.Check(); err != nil {
+		return cfg, fmt.Errorf("config %s: %w", Path(), err)
+	}
+	if err := cfg.Tasks.Check(); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
 	var old struct {

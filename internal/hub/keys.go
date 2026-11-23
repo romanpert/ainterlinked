@@ -33,6 +33,7 @@ var reads = map[string]bool{
 	"register": true, "agents": true, "agent": true, "resolve": true, "topics": true,
 	"waiters": true, "messages": true, "tasks": true, "facts": true, "boards": true,
 	"locks": true, "feed": true, "machine": true, "get_budget": true, "get_shared": true,
+	"stale_tasks": true,
 }
 
 var errHuman = errors.New(`harness "human" is the operator's and only the ainterlinked CLI or dashboard registers it; register as your own harness`)

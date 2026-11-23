@@ -254,6 +254,7 @@ func Tasks(list []core.Task) string {
 		if t.Wanted > 0 {
 			fmt.Fprintf(&b, " · %d waiting on it", t.Wanted)
 		}
+		b.WriteString(untouched(t))
 		if t.Terms != "" {
 			fmt.Fprintf(&b, "\n    terms: %s", t.Terms)
 		}
@@ -301,7 +302,7 @@ func Boards(list []core.Board) string {
 		for i, k := range keys {
 			parts[i] = fmt.Sprintf("%s %d", k, bd.Counts[k])
 		}
-		fmt.Fprintf(&b, "%s: %d tasks (%s)\n", bd.Name, bd.Total, strings.Join(parts, ", "))
+		fmt.Fprintf(&b, "%s: %d tasks (%s)%s\n", bd.Name, bd.Total, strings.Join(parts, ", "), staleCount(bd))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

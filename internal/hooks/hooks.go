@@ -681,7 +681,7 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Confi
 	} else {
 		fmt.Fprintf(&b, " %d other agent(s) online:\n%s", others, render.Briefing(peers, me, briefingPeers))
 	}
-	b.WriteString(boardLine(ctx, c, me, inProject))
+	b.WriteString(boardLine(ctx, c, me, inProject, cfg.Tasks.StaleAfterDays))
 	// What sessions that left this checkout knew: a line each, read on demand.
 	var left []core.Handover
 	if c.Call(ctx, "handovers", core.HandoverReq{Agent: me.ID, Start: true}, &left) == nil {
@@ -704,8 +704,9 @@ func briefing(ctx context.Context, c hub.Client, me core.Agent, cfg config.Confi
 
 // boardLine summarizes the project board: the agent's own open tasks and
 // the next ready ones, so work is picked from the board instead of
-// announced to everyone.
-func boardLine(ctx context.Context, c hub.Client, me core.Agent, peersInProject int) string {
+// announced to everyone, and how many it forgot when the user asked
+// ([tasks] stale_after_days).
+func boardLine(ctx context.Context, c hub.Client, me core.Agent, peersInProject, staleDays int) string {
 	var tasks []core.Task
 	if err := c.Call(ctx, "tasks", core.TaskFilter{Agent: me.ID, Open: true}, &tasks); err != nil {
 		return ""
@@ -727,7 +728,11 @@ func boardLine(ctx context.Context, c hub.Client, me core.Agent, peersInProject 
 			ready = append(ready, line)
 		}
 	}
-	s := fmt.Sprintf("\nBoard %q: %d open.", board, len(tasks))
+	s := fmt.Sprintf("\nBoard %q: %d open", board, len(tasks))
+	if n := forgotten(tasks, staleDays); n > 0 {
+		s += fmt.Sprintf(", %d untouched %dd+", n, staleDays)
+	}
+	s += "."
 	if len(mine) > 0 {
 		s += " Yours: " + strings.Join(mine, "; ") + "."
 	}
@@ -735,6 +740,18 @@ func boardLine(ctx context.Context, c hub.Client, me core.Agent, peersInProject 
 		s += " Ready: " + strings.Join(ready, "; ") + " (claim_task)."
 	}
 	return s
+}
+
+// forgotten counts the open tasks nobody moves on their own (not those in
+// progress) untouched for days or more; 0 when days is 0 (off).
+func forgotten(tasks []core.Task, days int) int {
+	n := 0
+	for _, t := range tasks {
+		if days > 0 && t.Status != "doing" && t.Untouched >= days {
+			n++
+		}
+	}
+	return n
 }
 
 func clipRunes(s string, n int) string {

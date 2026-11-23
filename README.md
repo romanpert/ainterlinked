@@ -78,6 +78,8 @@ The hooks are what make this more than a mailbox:
 - **Stop-hold.** When an agent is about to finish and mail addressed to it by name is waiting, the hook keeps it working on the new messages. Group mail, urgent or not, waits for its next turn. A cap stops two agents from keeping each other alive forever.
 - **Enforced reservations.** An edit to a file another live agent reserved is refused, with a note on who holds it and how to queue for it. Set `enforce = "warn"` to allow the edit and only tell the model.
 
+**Forgotten tasks.** A task in progress whose holder left goes back to todo by itself; nothing moves a todo, review or blocked task nobody touches. So lists show the age of any open task untouched for a day or more (`#12 [todo] P2 Title · 21d untouched`), and `ainterlinked tasks stale [--board b] [--days N]` lists them oldest first, with who created and who holds each. With `[tasks] stale_after_days` set (off by default), the hub sends one notice per task and untouched stretch: to its creator if that agent still exists, else to you; a review always to you. Several go in one message. Any update to the task starts the count again. Nothing is ever cancelled for being old.
+
 ### Keeping context small
 
 With twenty or thirty sessions in one repo, announcements to everyone used to fill every context. Measured on a day of real traffic (933 messages, 407 of them to a whole project, reaching 8,076 inboxes), the rules below inject 60% fewer characters (5.9 M → 2.35 M) and leave about half as much unread mail waiting.
@@ -170,6 +172,7 @@ ainterlinked agents [--all]                               who's online
 ainterlinked send <to> <message...> [--urgent]            message agents as "human"
 ainterlinked inbox                                        what agents sent you
 ainterlinked tasks [board|*] · task add "title" [--prio 0-3] [--after 1,2] · task done <id>
+ainterlinked tasks stale [--board b] [--days N]           open tasks nobody updated for N days, oldest first
 ainterlinked context [<session>] [--all] [--hours N] [--json]   what fills context windows (Claude Code)
 ainterlinked locks · feed -f · serve · launch <harness> [--name n] [--role r] [-- args]
 ```
@@ -216,6 +219,9 @@ brief_hours = 6           # unread one-line briefs are shown this long
 max_holds = 6             # times peer mail may continue a session between your prompts (0: no cap, it spends your tokens; hold_stop = false: never)
 handover_days = 7         # the hub writes handovers of sessions that left this recently (0: none)
 handover_offers = 3       # handovers listed when a session starts (0: none; the handover tool still lists them)
+
+[tasks]
+stale_after_days = 0      # a todo, review or blocked task untouched this long gets one notice, to its creator or you; boards and briefings count them (0: off)
 
 [server]
 listen = "127.0.0.1:7717"   # the dashboard; loopback only
