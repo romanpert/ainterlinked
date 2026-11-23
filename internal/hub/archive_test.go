@@ -61,7 +61,9 @@ func TestTheHubArchivesOnlyWhenTheUserSaysSo(t *testing.T) {
 	if onBoard() != 1 {
 		t.Fatal("0: nothing archived")
 	}
-	if err := os.WriteFile(config.Path(), []byte("[tasks]\narchive_after_days = 7\n"), 0o600); err != nil {
+	// Another size: Linux keeps mtimes to a few ms, and the hub sees a change
+	// by size and mtime.
+	if err := os.WriteFile(config.Path(), []byte("[tasks]\narchive_after_days = 7 # a week\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	srv.followLimits(stamp)
