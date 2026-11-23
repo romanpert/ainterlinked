@@ -23,8 +23,10 @@ import (
 //   - register: the anchor is the connection's, whatever the params say;
 //   - acting as an agent: only as one this connection registered (the keys
 //     stay inside the hub; nothing a caller can read or copy);
-//   - acting as the human: only from a process that isn't inside an agent
-//     harness. The ainterlinked CLI run from an agent's shell is that agent.
+//   - acting as the human: only from a process whose chain of parents
+//     reaches the login session without passing an agent harness. The
+//     ainterlinked CLI run from an agent's shell is that agent; one whose
+//     chain is broken is nobody the hub can vouch for (see notHuman).
 type Server struct {
 	Store   *core.Store
 	methods map[string]handler
@@ -140,7 +142,8 @@ type Hello struct {
 	Peer    int    `json:"peer"`
 	Anchor  int    `json:"anchor"`
 	Harness string `json:"harness,omitempty"`
-	Agent   bool   `json:"agent"` // the caller is inside an agent harness
+	Agent   bool   `json:"agent"`         // the caller can't act as the human operator
+	Why     string `json:"why,omitempty"` // why not, when Agent
 }
 
 // Version is the build's version, set by the CLI.
@@ -151,10 +154,14 @@ var errHumanFromAgent = errors.New("refused: this process runs inside an agent's
 func (s *Server) handle(ctx context.Context, p *peer, method string, raw json.RawMessage) (any, error) {
 	switch method {
 	case "hello":
-		return Hello{Version: Version, PID: s.pidSelf(), Peer: p.pid, Anchor: p.anchor, Harness: p.harness, Agent: s.agentAnchored(ctx, p)}, nil
+		h := Hello{Version: Version, PID: s.pidSelf(), Peer: p.pid, Anchor: p.anchor, Harness: p.harness}
+		if err := s.notHuman(ctx, p); err != nil {
+			h.Agent, h.Why = true, err.Error()
+		}
+		return h, nil
 	case "human":
-		if s.agentAnchored(ctx, p) {
-			return nil, errHumanFromAgent
+		if err := s.notHuman(ctx, p); err != nil {
+			return nil, err
 		}
 		var q struct {
 			Machine string `json:"machine"`
@@ -214,26 +221,44 @@ func (s *Server) readSpend(ctx context.Context, agent string) {
 	}
 }
 
-// agentAnchored: the caller runs inside an agent's harness. Such a caller
-// is never the human. The whole chain of ancestors counts, not just the
-// nearest program: the CLI wrapped in node (or anything else) by an agent
-// is still inside that agent's harness. When the chain can't be read, the
-// answer is "agent": unknown is not the human.
-func (s *Server) agentAnchored(ctx context.Context, p *peer) bool {
+// notHuman says why the caller can't act as the human operator, or nil when
+// it can. A caller inside an agent's harness is never the human. The whole
+// chain of ancestors counts, not just the nearest program: the CLI wrapped
+// in node (or anything else) by an agent is still inside that agent's
+// harness. And the chain must reach the login session (proc.Rooted): a
+// wrapper that breaks it, like Git Bash's timeout, hides the harness above
+// the break. A chain that can't be read or is broken is unknown, and
+// unknown is not the human.
+func (s *Server) notHuman(ctx context.Context, p *peer) error {
 	if p.anchor <= 0 || proc.IsHarness(p.harness) {
-		return true
+		return errHumanFromAgent
 	}
 	chain, err := s.Ancestry(p.pid)
 	if err != nil {
-		return true
+		return fmt.Errorf("refused: the hub can't read this process's parents (%v), so it isn't the human operator", err)
 	}
 	pids := []int{p.anchor}
 	for _, a := range chain {
 		if proc.IsHarness(a.Name) {
-			return true
+			return errHumanFromAgent
 		}
 		pids = append(pids, a.PID)
 	}
-	taken, err := s.Store.AnchorTaken(ctx, pids...)
-	return err != nil || taken
+	if !proc.Rooted(chain) {
+		return errBrokenChain(chain)
+	}
+	if taken, err := s.Store.AnchorTaken(ctx, pids...); err != nil || taken {
+		return errHumanFromAgent
+	}
+	return nil
+}
+
+func errBrokenChain(chain []proc.Info) error {
+	at := "the process itself"
+	if n := len(chain); n > 0 {
+		at = fmt.Sprintf("%s (pid %d)", chain[n-1].Name, chain[n-1].PID)
+	}
+	return fmt.Errorf("refused: the hub can't trace this process back to the login session: its parents stop at %s, whose parent is gone. "+
+		"A wrapper such as Git Bash's timeout or env, or Git Bash's own window, breaks the chain like that, and an agent's process looks the same, "+
+		"so this isn't the human operator; run the command straight from PowerShell, cmd, Windows Terminal or an IDE's terminal", at)
 }

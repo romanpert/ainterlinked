@@ -29,6 +29,10 @@ type Info struct {
 	PID  int
 	PPID int
 	Name string // lowercased executable base name without extension
+	// Created orders processes: a parent is never newer than its child.
+	// Only the Windows snapshot fills it (100 ns ticks); elsewhere it is 0,
+	// since Unix reparents orphans and a PPID always names the live parent.
+	Created int64
 }
 
 func normName(n string) string {

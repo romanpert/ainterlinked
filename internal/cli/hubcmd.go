@@ -23,8 +23,15 @@ func cmdHub(ctx context.Context, args []string) error {
 		if err := r.Call(ctx, "hello", nil, &h); err != nil {
 			return err
 		}
-		fmt.Printf("hub process %s, pid %d\nyou: pid %d, under %s (pid %d)%s\n", h.Version, h.PID, h.Peer, orUnknown(h.Harness), h.Anchor,
-			map[bool]string{true: ", an agent's harness", false: ", the human operator"}[h.Agent])
+		fmt.Printf("hub process %s, pid %d\nyou: pid %d, under %s (pid %d)", h.Version, h.PID, h.Peer, orUnknown(h.Harness), h.Anchor)
+		switch {
+		case !h.Agent:
+			fmt.Println(", the human operator")
+		case h.Why != "":
+			fmt.Println(", not the human operator:\n" + h.Why)
+		default: // an older hub process
+			fmt.Println(", an agent's harness")
+		}
 		return nil
 	}
 	err := hub.RunDaemon(ctx, loadConfig())
