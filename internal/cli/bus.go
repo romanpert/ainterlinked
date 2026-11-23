@@ -163,6 +163,9 @@ func cmdTasks(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "archive" {
 		return cmdTasksArchive(ctx, args[1:])
 	}
+	if len(args) > 0 && args[0] == "stale" {
+		return cmdTasksStale(ctx, args[1:])
+	}
 	fs := newFlags("tasks")
 	board := fs.String("board", "*", "board name, * for all")
 	open := fs.Bool("open", false, "hide done/cancelled (the default without --status)")

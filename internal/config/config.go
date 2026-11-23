@@ -27,8 +27,8 @@ type Config struct {
 	Presence  Presence              `toml:"presence"`
 	Locks     Locks                 `toml:"locks"`
 	Limits    core.Limits           `toml:"limits"`
-	Covenant  Covenant              `toml:"covenant"`
 	Tasks     Tasks                 `toml:"tasks"`
+	Covenant  Covenant              `toml:"covenant"`
 	Server    Server                `toml:"server"`
 	Harnesses map[string]HarnessCfg `toml:"harnesses"`
 }
@@ -177,6 +177,9 @@ func LoadFile() (Config, error) {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
 	if err := cfg.Limits.Check(); err != nil {
+		return cfg, fmt.Errorf("config %s: %w", Path(), err)
+	}
+	if err := cfg.Tasks.Check(); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", Path(), err)
 	}
 	var old struct {

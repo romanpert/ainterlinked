@@ -128,6 +128,7 @@ type Store struct {
 	now     func() time.Time
 	limits  atomic.Pointer[Limits]
 	shared  func(projectPath, rel string) bool // see Options.Shared
+	staleAt atomic.Int64                       // [tasks] stale_after_days (stale.go); 0: off
 
 	keyPath string     // the hub secret agent keys derive from (keys.go)
 	keyMu   sync.Mutex // guards secret
@@ -154,6 +155,9 @@ type Options struct {
 	// nobody holds it, so editing it reserves nothing and no reservation
 	// blocks it. nil: the owner's list decides (shared.go).
 	Shared func(projectPath, rel string) bool
+	// StaleAfterDays: an open task untouched this long gets one notice
+	// (stale.go); 0, the default, sends none.
+	StaleAfterDays int
 }
 
 // Open opens (creating if needed) the hub database at path.
@@ -205,6 +209,7 @@ func Open(path string, opt Options) (*Store, error) {
 		limits = *opt.Limits
 	}
 	s.SetLimits(limits)
+	s.SetStaleAfterDays(opt.StaleAfterDays)
 	return s, nil
 }
 

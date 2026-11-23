@@ -335,6 +335,12 @@ func (s *Store) subscribers(ctx context.Context, projectPath, topic string) ([]r
 // notice queues a hub-generated message for one agent, inside the caller's
 // tx. It is addressed to that agent, so it counts as direct mail.
 func notice(tx *sql.Tx, now int64, to Agent, subject, body string) {
+	noticeAs(tx, now, to, subject, body, 1)
+}
+
+// noticeAs is notice with the receipt's direct flag given: 0 for news that
+// waits for the agent's next turn and never holds or wakes a session.
+func noticeAs(tx *sql.Tx, now int64, to Agent, subject, body string, direct int) {
 	res, err := tx.Exec(`INSERT INTO messages(thread_id,reply_to,sender_id,sender_name,target,subject,body,urgent,created_at) VALUES(0,0,?,?,?,?,?,0,?)`,
 		SystemSender, SystemSender, to.Name, oneLine(subject, 200), body, now)
 	if err != nil {
@@ -342,7 +348,7 @@ func notice(tx *sql.Tx, now int64, to Agent, subject, body string) {
 	}
 	id, _ := res.LastInsertId()
 	_, _ = tx.Exec(`UPDATE messages SET thread_id=? WHERE id=?`, id, id)
-	_, _ = tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode,direct) VALUES(?,?,?,1)`, id, to.ID, ModeFull)
+	_, _ = tx.Exec(`INSERT OR IGNORE INTO receipts(message_id,agent_id,mode,direct) VALUES(?,?,?,?)`, id, to.ID, ModeFull, direct)
 }
 
 // InboxReq reads an agent's messages.

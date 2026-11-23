@@ -44,6 +44,7 @@ Use (as the human operator)
   tasks --query "words" [--limit n]  search every task by any text, archived ones too
   tasks archive [--board b] [--older-than 7d] [--to file.md]
                                      move closed tasks off the board into ~/.ainterlinked/archive/<board>.md
+  tasks stale [--board b] [--days N] open tasks nobody updated for N days, oldest first
   task add <title> [--board b] [--prio 0-3] [--after 1,2] [--label l] [--assign name]
   task claim|done|block|cancel|reopen <id> [--result text]
   locks                              active file reservations

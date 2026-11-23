@@ -92,6 +92,7 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 	idleSince := time.Now()
 	exclusive := false
 	pruned := time.Time{}
+	staleScan := time.Time{} // last look for forgotten tasks
 	t := time.NewTicker(checkEvery)
 	defer t.Stop()
 	for {
@@ -108,7 +109,9 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 			stop()
 			return
 		}
-		terms = s.followLimits(terms)
+		if next := s.followLimits(terms); next != terms {
+			terms, staleScan = next, time.Time{} // a new setting is applied at once
+		}
 		if s.Busy() {
 			idleSince = time.Now()
 		} else if time.Since(idleSince) > idleExit {
@@ -118,6 +121,7 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 		// Sessions that left hand their work over from their transcripts,
 		// a few per tick: reading a transcript is the hub's work, not theirs.
 		_, _ = s.Store.WriteHandovers(ctx, handoversPerTick, handoverIn)
+		staleScan = s.noticeStale(ctx, staleScan)
 		if time.Since(pruned) > time.Hour {
 			_ = s.Store.Prune(ctx, core.Retention)
 			s.archiveTick(ctx)
@@ -131,8 +135,8 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 	}
 }
 
-// followLimits applies the user's [limits], and whether idle sessions may be
-// woken, when config.toml has changed since stamp. A file that can't be read (mid-edit, a typo) leaves them as they are.
+// followLimits applies the user's [limits] and [tasks], and whether idle sessions may
+// be woken, when config.toml has changed since stamp. A file that can't be read (mid-edit, a typo) leaves them as they are.
 func (s *Server) followLimits(stamp string) string {
 	now := fileStamp(config.Path())
 	if now == stamp {
@@ -142,6 +146,7 @@ func (s *Server) followLimits(stamp string) string {
 		s.Store.SetLimits(cfg.Limits)
 		s.wakeIdle.Store(cfg.Delivery.WakeIdle)
 		s.archiveDays.Store(int64(cfg.Tasks.ArchiveAfterDays))
+		s.Store.SetStaleAfterDays(cfg.Tasks.StaleAfterDays)
 	}
 	return now
 }
@@ -220,13 +225,15 @@ func spawn() error {
 }
 
 func storeOptions(cfg config.Config, busy time.Duration) core.Options {
-	return core.Options{
+	o := core.Options{
 		Stale:   time.Duration(cfg.Presence.StaleSeconds) * time.Second,
 		Machine: cfg.Machine,
 		Alive:   proc.AliveSet,
 		Busy:    busy,
 		Limits:  &cfg.Limits,
 	}
+	o.StaleAfterDays = cfg.Tasks.StaleAfterDays
+	return o
 }
 
 // openLocal is the in-process hub (no hub process).
@@ -236,4 +243,18 @@ func openLocal(cfg config.Config, busy time.Duration) (Client, error) {
 		return nil, err
 	}
 	return NewLocal(st), nil
+}
+
+// staleEvery is how often the hub looks for forgotten tasks: their age is
+// counted in days.
+const staleEvery = time.Hour
+
+// noticeStale tells about tasks untouched past [tasks] stale_after_days
+// (nothing when it is off) if the last look, at last, is staleEvery old.
+func (s *Server) noticeStale(ctx context.Context, last time.Time) time.Time {
+	if !last.IsZero() && time.Since(last) < staleEvery {
+		return last
+	}
+	_, _ = s.Store.NoticeStaleTasks(ctx)
+	return time.Now()
 }

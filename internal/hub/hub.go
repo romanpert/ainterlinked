@@ -190,6 +190,7 @@ func Methods(s *core.Store) map[string]handler {
 			n, err := s.Release(ctx, p.Agent, p.Paths)
 			return ReleaseResult{n}, err
 		}),
+		"stale_tasks":    op(s.StaleTasks),
 		"locks":          op(func(ctx context.Context, p ProjectParam) ([]core.Lock, error) { return s.Locks(ctx, p.ProjectPath) }),
 		"check_file":     op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.CheckFile(ctx, p.Agent, p.File) }),
 		"touch_file":     op(func(ctx context.Context, p FileParam) (*core.Lock, error) { return s.TouchFile(ctx, p.Agent, p.File) }),
