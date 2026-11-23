@@ -254,6 +254,7 @@ func Tasks(list []core.Task) string {
 		if t.Wanted > 0 {
 			fmt.Fprintf(&b, " · %d waiting on it", t.Wanted)
 		}
+		b.WriteString(foundMarks(t))
 		if t.Terms != "" {
 			fmt.Fprintf(&b, "\n    terms: %s", t.Terms)
 		}

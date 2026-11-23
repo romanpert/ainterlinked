@@ -40,7 +40,10 @@ Use (as the human operator)
   agents [--all]                     who is online, on what, in which project
   send <to> <message...>             message agents (name, project:<p>, harness:<h>, *)
   inbox [--all]                      messages agents sent to "human"
-  tasks [--board b|*] [--open]       show a task board
+  tasks [--board b|*] [--status s]   show a task board (open tasks, unless --status done|cancelled)
+  tasks --query "words" [--limit n]  search every task by any text, archived ones too
+  tasks archive [--board b] [--older-than 7d] [--to file.md]
+                                     move closed tasks off the board into ~/.ainterlinked/archive/<board>.md
   task add <title> [--board b] [--prio 0-3] [--after 1,2] [--label l] [--assign name]
   task claim|done|block|cancel|reopen <id> [--result text]
   locks                              active file reservations

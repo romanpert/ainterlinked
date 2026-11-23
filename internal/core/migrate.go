@@ -99,6 +99,63 @@ CREATE TABLE IF NOT EXISTS handovers(
 CREATE INDEX IF NOT EXISTS handovers_place ON handovers(machine, project_path, created_at);
 `
 
+// schemaArchive (v9) holds closed tasks moved off the boards (archive.go)
+// and a full-text index over every task, on a board or archived
+// (search.go). The index is kept by triggers, so a binary that predates it
+// keeps it right too; they use only SQLite's own functions for that reason.
+// The trigram tokenizer folds case and accents itself (remove_diacritics).
+// A task keeps its id when archived (ids are never reused), so the index
+// row of task n is rowid n wherever the task lives.
+const schemaArchive = `
+CREATE TABLE IF NOT EXISTS archived_tasks(
+  id INTEGER PRIMARY KEY,
+  board TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 2,
+  assignee_id TEXT NOT NULL DEFAULT '',
+  assignee TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_by_id TEXT NOT NULL DEFAULT '',
+  depends_on TEXT NOT NULL DEFAULT '',
+  labels TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  archived_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS archived_tasks_board ON archived_tasks(board, status);
+CREATE VIRTUAL TABLE IF NOT EXISTS task_search USING fts5(title, body, result, labels, people,
+  tokenize='trigram remove_diacritics 1');
+CREATE TRIGGER IF NOT EXISTS task_search_add AFTER INSERT ON tasks BEGIN
+  INSERT INTO task_search(rowid,title,body,result,labels,people)
+    VALUES(new.id, new.title, new.body, new.result, new.labels, new.assignee||' '||new.created_by);
+END;
+CREATE TRIGGER IF NOT EXISTS task_search_edit AFTER UPDATE OF title,body,result,labels,assignee,created_by ON tasks BEGIN
+  DELETE FROM task_search WHERE rowid=old.id;
+  INSERT INTO task_search(rowid,title,body,result,labels,people)
+    VALUES(new.id, new.title, new.body, new.result, new.labels, new.assignee||' '||new.created_by);
+END;
+CREATE TRIGGER IF NOT EXISTS task_search_drop AFTER DELETE ON tasks
+  WHEN NOT EXISTS (SELECT 1 FROM archived_tasks WHERE id=old.id) BEGIN
+  DELETE FROM task_search WHERE rowid=old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS task_search_archive AFTER INSERT ON archived_tasks BEGIN
+  DELETE FROM task_search WHERE rowid=new.id;
+  INSERT INTO task_search(rowid,title,body,result,labels,people)
+    VALUES(new.id, new.title, new.body, new.result, new.labels, new.assignee||' '||new.created_by);
+END;
+CREATE TRIGGER IF NOT EXISTS task_search_unarchive AFTER DELETE ON archived_tasks
+  WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=old.id) BEGIN
+  DELETE FROM task_search WHERE rowid=old.id;
+END;
+INSERT INTO task_search(rowid,title,body,result,labels,people)
+  SELECT id, title, body, result, labels, assignee||' '||created_by FROM tasks WHERE id NOT IN (SELECT rowid FROM task_search);
+INSERT INTO task_search(rowid,title,body,result,labels,people)
+  SELECT id, title, body, result, labels, assignee||' '||created_by FROM archived_tasks WHERE id NOT IN (SELECT rowid FROM task_search);
+`
+
 // addedColumns are applied with ALTER TABLE when missing, so a database made
 // by an older version upgrades in place and older binaries keep working on it
 // (every new column has a default).
@@ -121,6 +178,9 @@ var addedColumns = []struct{ table, column, ddl string }{
 // migrate brings db to the current schema.
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schemaV2); err != nil {
+		return fmt.Errorf("schema: %w", err)
+	}
+	if _, err := db.Exec(schemaArchive); err != nil { // the last lines backfill the index
 		return fmt.Errorf("schema: %w", err)
 	}
 	for _, c := range addedColumns {
@@ -146,8 +206,9 @@ func upgraded(db *sql.DB) bool {
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine','spend','handovers')`).Scan(&n)
-	return err == nil && n == 8
+	err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('prefs','subscriptions','waiters','task_wants','broadcast_budget','machine','spend','handovers',
+		'archived_tasks','task_search')`).Scan(&n)
+	return err == nil && n == 10
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {

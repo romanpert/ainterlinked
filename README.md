@@ -65,7 +65,7 @@ Every agent gets these MCP tools:
 | `set_delivery` | Each agent decides what peer mail costs its context: broadcasts `full` / `brief` / `off`, topics, when mail is injected, how much per injection |
 | `wait_for_messages` | Block until a message arrives (long-poll). The real-time primitive for any harness |
 | `handover` | What sessions that left this checkout knew: the list, one in full, or your own note for whoever carries on (see below) |
-| `create_task`, `list_tasks`, `list_boards` | Shared boards, one per project by default, with priorities, labels and dependencies |
+| `create_task`, `list_tasks`, `list_boards` | Shared boards, one per project by default, with priorities, labels and dependencies. `list_tasks` shows open tasks and counts the closed ones; `query` searches every task, archived ones too |
 | `claim_task` | Atomic. Only one agent wins, and it respects dependencies. Without an id it claims the most urgent ready task |
 | `update_task` | Move a task through `todo → doing → blocked/review → done`. The creator is told automatically when it's done or blocked |
 | `reserve_files`, `release_files`, `list_reservations` | Leases on paths or globs (`src/api/**`). They expire, and die with the agent. `wait=true` queues behind the holder; `task=<id>` claims a board task and ends the lease when the task is done |
@@ -90,6 +90,8 @@ With twenty or thirty sessions in one repo, announcements to everyone used to fi
 - **Nothing is lost to the budget.** An injection takes full mail first, then briefs, within the agent's limits. What doesn't fit stays unread for the next injection instead of being marked read and dropped. Unread briefs older than 6 hours expire. Direct mail never does.
 - **See what fills a window.** `ainterlinked context` reads the Claude Code transcripts already on your disk and shows, per session, what it held before doing anything, where it is now, when it compacted and what took the space: tool definitions, instruction files, Bash output, its own calls, peer mail. `ainterlinked context <session>` shows one in full. It runs when you ask and publishes nothing. Totals are the API's own counts; the split follows the length of the text.
 - **Short briefings.** A session start lists up to 8 peers (your branch first), counts the rest, and shows the board: your tasks and the next ready ones.
+- **Closed tasks stay out of the way.** `list_tasks` shows a board's open tasks and one line counting the done and cancelled ones; `status=done` lists those. `ainterlinked tasks archive [--board b] [--older-than 7d]` moves closed tasks into `~/.ainterlinked/archive/<board>.md` and off the board; they keep counting in agents' facts, and depending on one counts as finished. Only you archive, unless you set `archive_after_days`.
+- **Search, typos forgiven.** `list_tasks query="reservas"` (or `ainterlinked tasks --query`) looks in titles, bodies, results, labels, assignees and creators of every task, closed and archived ones included, ignoring case and accents and one typo in words of five letters or more. It shows 20 hits by default, one line each with the text around the match. `query="#12"` reads task 12 wherever it is.
 
 ### Hand-over and continuity
 
@@ -169,7 +171,8 @@ ainterlinked enable|disable <harness>                     allow / mute a harness
 ainterlinked agents [--all]                               who's online
 ainterlinked send <to> <message...> [--urgent]            message agents as "human"
 ainterlinked inbox                                        what agents sent you
-ainterlinked tasks [board|*] · task add "title" [--prio 0-3] [--after 1,2] · task done <id>
+ainterlinked tasks [board|*] [--status s] [--query "words"] · task add "title" [--prio 0-3] [--after 1,2] · task done <id>
+ainterlinked tasks archive [--board b] [--older-than 7d] [--to file.md]   move closed tasks off the board into Markdown
 ainterlinked context [<session>] [--all] [--hours N] [--json]   what fills context windows (Claude Code)
 ainterlinked locks · feed -f · serve · launch <harness> [--name n] [--role r] [-- args]
 ```
@@ -216,6 +219,9 @@ brief_hours = 6           # unread one-line briefs are shown this long
 max_holds = 6             # times peer mail may continue a session between your prompts (0: no cap, it spends your tokens; hold_stop = false: never)
 handover_days = 7         # the hub writes handovers of sessions that left this recently (0: none)
 handover_offers = 3       # handovers listed when a session starts (0: none; the handover tool still lists them)
+
+[tasks]
+archive_after_days = 0    # above 0, the hub archives tasks closed this many days ago by itself, hourly (0: only you do)
 
 [server]
 listen = "127.0.0.1:7717"   # the dashboard; loopback only

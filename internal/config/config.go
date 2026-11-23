@@ -28,6 +28,7 @@ type Config struct {
 	Locks     Locks                 `toml:"locks"`
 	Limits    core.Limits           `toml:"limits"`
 	Covenant  Covenant              `toml:"covenant"`
+	Tasks     Tasks                 `toml:"tasks"`
 	Server    Server                `toml:"server"`
 	Harnesses map[string]HarnessCfg `toml:"harnesses"`
 }

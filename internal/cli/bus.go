@@ -160,9 +160,15 @@ func cmdInbox(ctx context.Context, args []string) error {
 }
 
 func cmdTasks(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "archive" {
+		return cmdTasksArchive(ctx, args[1:])
+	}
 	fs := newFlags("tasks")
 	board := fs.String("board", "*", "board name, * for all")
-	open := fs.Bool("open", false, "hide done/cancelled")
+	open := fs.Bool("open", false, "hide done/cancelled (the default without --status)")
+	status := fs.String("status", "", "only this status (done or cancelled lists closed tasks)")
+	query := fs.String("query", "", "search every task, archived ones too, by any text")
+	limit := fs.Int("limit", 0, "max search hits (default 20)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -175,11 +181,11 @@ func cmdTasks(ctx context.Context, args []string) error {
 		return err
 	}
 	defer c.Close()
-	var list []core.Task
-	if err := c.Call(ctx, "tasks", core.TaskFilter{Board: *board, Open: *open}, &list); err != nil {
+	var page core.TaskPage
+	if err := c.Call(ctx, "task_list", core.TaskFilter{Board: *board, Open: *open, Status: *status, Query: *query, Limit: *limit}, &page); err != nil {
 		return err
 	}
-	fmt.Println(render.Tasks(list))
+	fmt.Println(render.TaskPage(page))
 	return nil
 }
 

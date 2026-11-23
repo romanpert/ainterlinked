@@ -84,9 +84,11 @@ func toolDefs(l core.Limits) []tool {
 			obj(prop{"title": str("Task title"), "body": str("Details / acceptance criteria"), "board": str("Board name, default your project"),
 				"priority": num("0 urgent, 1 high, 2 normal (default), 3 low"), "depends_on": nums("Task ids that must finish first"),
 				"labels": strs("Labels, e.g. frontend"), "assignee": str("Agent name to assign directly")}, "title"), nil},
-		{"list_tasks", "Show a task board.",
+		{"list_tasks", "Show a task board: its open tasks, and how many are closed (status=done or cancelled lists those). query searches every task instead, closed and archived ones too.",
 			obj(prop{"board": str("Board name; default your project; '*' for all"), "status": prop{"type": "string", "enum": core.TaskStatuses},
-				"mine": boo("Only tasks assigned to you"), "open": boo("Hide done/cancelled")}), ro()},
+				"mine": boo("Only tasks assigned to you"), "open": boo("Hide done/cancelled (the default without status)"),
+				"query": str("Words in title, body, result, labels, assignee or creator; case, accents and one typo don't matter; '#12' reads task 12"),
+				"limit": num("Max search hits, default 20")}), ro()},
 		{"list_boards", "List task boards with counts per status.", obj(prop{}), ro()},
 		{"claim_task", "Atomically take a todo task (no one else can take it). Without id, claims the most urgent ready task on the board.",
 			obj(prop{"id": num("Task id"), "board": str("Board for auto-pick"), "label": str("Only auto-pick tasks with this label")}), nil},
@@ -370,11 +372,13 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		get("status", &f.Status)
 		get("mine", &f.Mine)
 		get("open", &f.Open)
-		var list []core.Task
-		if err := c.Call(ctx, "tasks", f, &list); err != nil {
+		get("query", &f.Query)
+		get("limit", &f.Limit)
+		var page core.TaskPage
+		if err := c.Call(ctx, "task_list", f, &page); err != nil {
 			return "", err
 		}
-		return render.Tasks(list), nil
+		return render.TaskPage(page), nil
 	case "list_boards":
 		var list []core.Board
 		if err := c.Call(ctx, "boards", hub.Empty{}, &list); err != nil {
