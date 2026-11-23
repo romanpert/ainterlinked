@@ -149,6 +149,11 @@ func Methods(s *core.Store) map[string]handler {
 		"messages":    op(func(ctx context.Context, p LimitParam) ([]core.Message, error) { return s.RecentMessages(ctx, p.Limit) }),
 		"task_create": op(s.CreateTask),
 		"tasks":       op(s.ListTasks),
+		"task_list":   op(s.TaskList),
+		"task_archive": op(func(ctx context.Context, r core.ArchiveReq) (core.ArchiveResult, error) {
+			r.Dir = ArchiveDir()
+			return s.ArchiveTasks(ctx, r)
+		}),
 		"task_update": op(s.UpdateTask),
 		"task_claim":  op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.Claim(ctx, p.Agent, p.ID) }),
 		"task_want":   op(func(ctx context.Context, p ClaimParam) (core.Task, error) { return s.WantTask(ctx, p.Agent, p.ID) }),

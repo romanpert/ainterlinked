@@ -71,16 +71,17 @@ func (s *Store) AgentFacts(ctx context.Context, viewer string, names []string) (
 	since := now - FactsWindow.Milliseconds()
 	// Tasks taken, done, open: not the trespass ones (those aren't work it
 	// chose). A task it still holds counts however old: sitting on a claim
-	// is a fact too.
+	// is a fact too. Archived tasks count as well: archiving tidies a board,
+	// it doesn't change what an agent did.
 	trespassLabel := `(instr(','||labels||',', ',` + LabelRestitution + `,')>0 OR instr(','||labels||',', ',` + LabelReconcile + `,')>0)`
 	if err := s.group(ctx, out, `SELECT lower(assignee), count(*), coalesce(sum(status='done'),0), coalesce(sum(status IN ('doing','blocked','review')),0)
-		FROM tasks WHERE (updated_at>? AND status<>'todo' OR status IN ('doing','blocked','review')) AND NOT `+trespassLabel+`
+		FROM `+everyTask+` WHERE (updated_at>? AND status<>'todo' OR status IN ('doing','blocked','review')) AND NOT `+trespassLabel+`
 		AND lower(assignee) IN (`+in+`) GROUP BY lower(assignee)`,
 		args(since), func(f *Facts, v []int64) { f.Taken, f.Done, f.Open = int(v[0]), int(v[1]), int(v[2]) }); err != nil {
 		return nil, err
 	}
 	if err := s.group(ctx, out, `SELECT lower(assignee), count(*), coalesce(sum(status NOT IN ('done','cancelled')),0)
-		FROM tasks WHERE created_at>? AND instr(','||labels||',', ',`+LabelRestitution+`,')>0 AND lower(assignee) IN (`+in+`) GROUP BY lower(assignee)`,
+		FROM `+everyTask+` WHERE created_at>? AND instr(','||labels||',', ',`+LabelRestitution+`,')>0 AND lower(assignee) IN (`+in+`) GROUP BY lower(assignee)`,
 		args(since), func(f *Facts, v []int64) { f.Trespass, f.TrespassOpen = int(v[0]), int(v[1]) }); err != nil {
 		return nil, err
 	}

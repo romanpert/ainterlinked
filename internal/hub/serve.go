@@ -46,7 +46,8 @@ type Server struct {
 	// only what's new: the hub process lives long enough for that.
 	spender *transcript.Spender
 
-	wakeIdle atomic.Bool // the user's delivery.wake_idle
+	wakeIdle    atomic.Bool  // the user's delivery.wake_idle
+	archiveDays atomic.Int64 // the user's tasks.archive_after_days (archive.go)
 }
 
 // NewServer serves st.

@@ -32,6 +32,10 @@ type Task struct {
 	Wanted int `json:"wanted,omitempty"`
 	// Terms are the conditions the holder accepted by claiming it.
 	Terms string `json:"terms,omitempty"`
+	// ArchivedAt is when the task left the board (archive.go); 0 on a board.
+	ArchivedAt int64 `json:"archived_at,omitempty"`
+	// Snippet is the text around a search match (search.go).
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // Tasks are property. A held task (it has an assignee) belongs to its
@@ -89,11 +93,12 @@ var TaskStatuses = []string{"todo", "doing", "blocked", "review", "done", "cance
 
 const taskCols = `id,board,title,body,status,priority,assignee_id,assignee,created_by,created_by_id,depends_on,labels,result,created_at,updated_at`
 
-func scanTask(r scanner) (Task, error) {
+// scanTask reads taskCols, then any extra columns into extra.
+func scanTask(r scanner, extra ...any) (Task, error) {
 	var t Task
 	var deps, labels string
-	err := r.Scan(&t.ID, &t.Board, &t.Title, &t.Body, &t.Status, &t.Priority, &t.AssigneeID, &t.Assignee,
-		&t.CreatedBy, &t.CreatedByID, &deps, &labels, &t.Result, &t.CreatedAt, &t.UpdatedAt)
+	err := r.Scan(append([]any{&t.ID, &t.Board, &t.Title, &t.Body, &t.Status, &t.Priority, &t.AssigneeID, &t.Assignee,
+		&t.CreatedBy, &t.CreatedByID, &deps, &labels, &t.Result, &t.CreatedAt, &t.UpdatedAt}, extra...)...)
 	t.DependsOn = parseIDs(deps)
 	t.Labels = splitList(labels)
 	return t, err
@@ -184,8 +189,8 @@ func (s *Store) CreateTask(ctx context.Context, r TaskReq) (Task, error) {
 	var out Task
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		for _, d := range r.DependsOn {
-			var n int
-			if err := tx.QueryRow(`SELECT count(*) FROM tasks WHERE id=?`, d).Scan(&n); err != nil || n == 0 {
+			var n int // an archived task is a finished one: depending on it is fine
+			if err := tx.QueryRow(`SELECT (SELECT count(*) FROM tasks WHERE id=?)+(SELECT count(*) FROM archived_tasks WHERE id=?)`, d, d).Scan(&n); err != nil || n == 0 {
 				return fmt.Errorf("depends_on: no task #%d", d)
 			}
 		}
@@ -222,14 +227,16 @@ type TaskFilter struct {
 	Assignee string `json:"assignee,omitempty"`
 	Mine     bool   `json:"mine,omitempty"`
 	Open     bool   `json:"open,omitempty"` // exclude done/cancelled
+	// Query searches tasks on boards and archived ones (search.go); Limit
+	// caps the hits (default 20).
+	Query string `json:"query,omitempty"`
+	Limit int    `json:"limit,omitempty"`
 }
 
-// ListTasks returns tasks ordered by status, priority and age.
-func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
-	if err := s.tx(ctx, s.abandon); err != nil {
-		return nil, err
-	}
-	q := `SELECT ` + taskCols + ` FROM tasks WHERE 1=1`
+// taskScope is f's board, status and assignee conditions, to append after
+// WHERE: the columns are the same in tasks and archived_tasks.
+func (s *Store) taskScope(ctx context.Context, f TaskFilter) (string, []any) {
+	var q string
 	var args []any
 	var me Agent
 	if f.Agent != "" {
@@ -257,7 +264,17 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 		q += ` AND lower(assignee)=lower(?)`
 		args = append(args, strings.TrimPrefix(f.Assignee, "@"))
 	}
-	q += ` ORDER BY CASE status WHEN 'doing' THEN 0 WHEN 'blocked' THEN 1 WHEN 'review' THEN 2 WHEN 'todo' THEN 3 ELSE 4 END, priority, id LIMIT 500`
+	return q, args
+}
+
+// ListTasks returns tasks ordered by status, priority and age.
+func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
+	if err := s.tx(ctx, s.abandon); err != nil {
+		return nil, err
+	}
+	scope, args := s.taskScope(ctx, f)
+	q := `SELECT ` + taskCols + ` FROM tasks WHERE 1=1` + scope +
+		` ORDER BY CASE status WHEN 'doing' THEN 0 WHEN 'blocked' THEN 1 WHEN 'review' THEN 2 WHEN 'todo' THEN 3 ELSE 4 END, priority, id LIMIT 500`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -272,32 +289,43 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 		out = append(out, t)
 	}
 	rows.Close()
+	return out, s.decorate(ctx, out)
+}
+
+// decorate fills in, on tasks still on a board, whether they wait on
+// unfinished dependencies and how many agents want them.
+func (s *Store) decorate(ctx context.Context, out []Task) error {
 	wanted := map[int64]int{}
 	wr, err := s.db.QueryContext(ctx, `SELECT task_id, count(*) FROM task_wants GROUP BY task_id`)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for wr.Next() {
 		var id int64
 		var n int
 		if err := wr.Scan(&id, &n); err != nil {
 			wr.Close()
-			return nil, err
+			return err
 		}
 		wanted[id] = n
 	}
 	if err := wr.Err(); err != nil {
 		wr.Close()
-		return nil, err
+		return err
 	}
 	wr.Close()
 	for i := range out {
+		if out[i].ArchivedAt > 0 {
+			continue
+		}
 		out[i].Blocked = s.depsPending(ctx, nil, out[i].DependsOn)
 		out[i].Wanted = wanted[out[i].ID]
 	}
-	return out, nil
+	return nil
 }
 
+// depsPending reports whether a dependency is still open. One that is no
+// longer on a board was archived, which only closed tasks are: finished.
 func (s *Store) depsPending(ctx context.Context, tx *sql.Tx, deps []int64) bool {
 	for _, d := range deps {
 		var st string
@@ -352,7 +380,7 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 	}
 	cur, err := scanTask(s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id=?`, u.ID))
 	if err != nil {
-		return Task{}, fmt.Errorf("no task #%d", u.ID)
+		return Task{}, noTask(s.db, u.ID)
 	}
 	if !mayChange(cur, by) {
 		if isClaim(u, cur, assignee, by) {
@@ -367,7 +395,7 @@ func (s *Store) UpdateTask(ctx context.Context, u TaskUpdate) (Task, error) {
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, u.ID))
 		if err != nil {
-			return fmt.Errorf("no task #%d", u.ID)
+			return noTask(tx, u.ID)
 		}
 		if t.AssigneeID != cur.AssigneeID && !mayChange(t, by) {
 			return fmt.Errorf("task #%d changed hands meanwhile; it is now %s's", u.ID, t.Assignee)
@@ -458,7 +486,7 @@ func (s *Store) Claim(ctx context.Context, agent string, id int64) (Task, error)
 		}
 		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
 		if err != nil {
-			return fmt.Errorf("no task #%d", id)
+			return noTask(tx, id)
 		}
 		mine := t.AssigneeID == me.ID
 		switch {
@@ -516,7 +544,7 @@ func (s *Store) WantTask(ctx context.Context, agent string, id int64) (Task, err
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		t, err := scanTask(tx.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
 		if err != nil {
-			return fmt.Errorf("no task #%d", id)
+			return noTask(tx, id)
 		}
 		switch {
 		case t.Status == "done" || t.Status == "cancelled":
@@ -595,7 +623,7 @@ func (s *Store) abandon(tx *sql.Tx) error {
 func (s *Store) taskForReservation(ctx context.Context, me Agent, id int64) (t Task, claimed bool, err error) {
 	t, err = scanTask(s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id=?`, id))
 	if err != nil {
-		return Task{}, false, fmt.Errorf("no task #%d", id)
+		return Task{}, false, noTask(s.db, id)
 	}
 	switch {
 	case t.Status == "done" || t.Status == "cancelled":

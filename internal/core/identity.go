@@ -106,6 +106,8 @@ func (s *Store) ContinueAs(ctx context.Context, me, ref string) (Agent, error) {
 			{`UPDATE messages SET sender_id=? WHERE sender_id=?`, []any{self.ID, old.ID}},
 			{`UPDATE tasks SET assignee_id=?, assignee=? WHERE assignee_id=?`, []any{self.ID, name, old.ID}},
 			{`UPDATE tasks SET created_by_id=? WHERE created_by_id=?`, []any{self.ID, old.ID}},
+			{`UPDATE archived_tasks SET assignee_id=?, assignee=? WHERE assignee_id=?`, []any{self.ID, name, old.ID}},
+			{`UPDATE archived_tasks SET created_by_id=? WHERE created_by_id=?`, []any{self.ID, old.ID}},
 			// Reservations only carry over inside the same checkout.
 			{`UPDATE locks SET agent_id=?, agent_name=? WHERE agent_id=? AND project_path=?`, []any{self.ID, name, old.ID, self.ProjectPath}},
 			{`DELETE FROM locks WHERE agent_id=?`, []any{old.ID}},

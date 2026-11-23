@@ -120,6 +120,7 @@ func (s *Server) watch(ctx context.Context, stop func()) {
 		_, _ = s.Store.WriteHandovers(ctx, handoversPerTick, handoverIn)
 		if time.Since(pruned) > time.Hour {
 			_ = s.Store.Prune(ctx, core.Retention)
+			s.archiveTick(ctx)
 			pruned = time.Now()
 		}
 		if !exclusive {
@@ -140,6 +141,7 @@ func (s *Server) followLimits(stamp string) string {
 	if cfg, err := config.LoadFile(); err == nil {
 		s.Store.SetLimits(cfg.Limits)
 		s.wakeIdle.Store(cfg.Delivery.WakeIdle)
+		s.archiveDays.Store(int64(cfg.Tasks.ArchiveAfterDays))
 	}
 	return now
 }

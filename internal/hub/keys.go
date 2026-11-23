@@ -25,6 +25,7 @@ var actors = map[string]string{
 	"reserve": "agent", "release": "agent", "check_file": "agent", "touch_file": "agent",
 	"note": "agent", "machine_sample": "agent",
 	"handovers": "agent", "handover": "agent", "handover_note": "agent",
+	"task_archive": "by",
 }
 
 // reads need no key: they name nobody's identity, or (register) they are
@@ -33,6 +34,7 @@ var reads = map[string]bool{
 	"register": true, "agents": true, "agent": true, "resolve": true, "topics": true,
 	"waiters": true, "messages": true, "tasks": true, "facts": true, "boards": true,
 	"locks": true, "feed": true, "machine": true, "get_budget": true, "get_shared": true,
+	"task_list": true,
 }
 
 var errHuman = errors.New(`harness "human" is the operator's and only the ainterlinked CLI or dashboard registers it; register as your own harness`)
