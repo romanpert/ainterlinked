@@ -15,6 +15,10 @@ import (
 	"github.com/romanpert/ainterlinked/internal/proc"
 )
 
+// login ends a fake chain at the login session on every OS: proc.Rooted
+// reads the name on Windows and the PID elsewhere.
+var login = proc.Info{PID: 1, Name: "explorer"}
+
 // startServer runs a hub process server in-process on a short socket path
 // (Windows and Unix cap it near 100 bytes). anchors maps a peer PID to the
 // harness the test pretends it runs under; the kernel still reports the
@@ -34,7 +38,7 @@ func startServer(t *testing.T, anchor func(pid int) (int, string)) (*Server, str
 	st.SingleConn()
 	srv := NewServer(st)
 	srv.Anchor = anchor
-	srv.Ancestry = func(int) ([]proc.Info, error) { return nil, nil } // tests set the chain
+	srv.Ancestry = func(int) ([]proc.Info, error) { return []proc.Info{login}, nil } // tests set the chain
 	sock := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -118,7 +122,7 @@ func TestTheHumanIsWhoeverIsOutsideEveryHarness(t *testing.T) {
 // harness whatever that harness's executable is called.
 func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
 	var mu sync.Mutex
-	anchor, chain := 7100, []proc.Info{{PID: 7100, PPID: 4242, Name: "node"}, {PID: 4242, PPID: 900, Name: "claude"}, {PID: 900, Name: "explorer"}}
+	anchor, chain := 7100, []proc.Info{{PID: 7100, PPID: 4242, Name: "node"}, {PID: 4242, PPID: 1, Name: "claude"}, login}
 	var chainErr error
 	set := func(a int, c []proc.Info, err error) { mu.Lock(); anchor, chain, chainErr = a, c, err; mu.Unlock() }
 	srv, sock := startServer(t, func(int) (int, string) {
@@ -138,12 +142,12 @@ func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
 	}
 	// A harness ainterlinked doesn't know by name, but registered: gemini
 	// runs as node (pid 5000). A process under it is that agent's.
-	set(5000, []proc.Info{{PID: 5000, PPID: 900, Name: "node"}, {PID: 900, Name: "explorer"}}, nil)
+	set(5000, []proc.Info{{PID: 5000, PPID: 1, Name: "node"}, login}, nil)
 	var gem core.Agent
 	if err := dial(t, sock).Call(ctx, "register", core.RegisterReq{Harness: "gemini", Project: "shop", ProjectPath: "/w/shop", SessionID: "g1"}, &gem); err != nil {
 		t.Fatalf("gemini: %+v %v", gem, err)
 	}
-	set(7200, []proc.Info{{PID: 7200, PPID: 5000, Name: "go"}, {PID: 5000, PPID: 900, Name: "node"}, {PID: 900, Name: "explorer"}}, nil)
+	set(7200, []proc.Info{{PID: 7200, PPID: 5000, Name: "go"}, {PID: 5000, PPID: 1, Name: "node"}, login}, nil)
 	if _, err := dial(t, sock).Human(ctx, "box"); err == nil {
 		t.Fatal("a process under a registered agent's harness became the human")
 	}
@@ -153,9 +157,42 @@ func TestTheHumanCantBeAnAgentsGrandchild(t *testing.T) {
 		t.Fatal("an unreadable chain became the human")
 	}
 	// A terminal outside every harness is.
-	set(7400, []proc.Info{{PID: 7400, PPID: 900, Name: "windowsterminal"}, {PID: 900, Name: "explorer"}}, nil)
+	set(7400, []proc.Info{{PID: 7400, PPID: 1, Name: "windowsterminal"}, login}, nil)
 	if h, err := dial(t, sock).Human(ctx, "box"); err != nil || h.Name != "human" {
 		t.Fatalf("the human's own terminal: %+v %v", h, err)
+	}
+}
+
+// A chain that stops before the login session is unknown, and unknown is
+// not the human: an agent's `timeout 30 ainterlinked` in Git Bash stops at
+// timeout, whose parent (a forked bash) has exited.
+func TestABrokenChainIsNotTheHuman(t *testing.T) {
+	var mu sync.Mutex
+	chain := []proc.Info{{PID: 52228, PPID: 54200, Name: "timeout"}, {PID: 54200, PPID: 27848, Name: "timeout"}}
+	srv, sock := startServer(t, func(int) (int, string) { return 52228, "timeout" })
+	srv.Ancestry = func(int) ([]proc.Info, error) { mu.Lock(); defer mu.Unlock(); return chain, nil }
+	ctx := context.Background()
+	if _, err := dial(t, sock).Human(ctx, "box"); err == nil || !strings.Contains(err.Error(), "stop at timeout (pid 54200)") {
+		t.Fatalf("a chain broken by a wrapper became the human: %v", err)
+	}
+	var hello Hello
+	if err := dial(t, sock).Call(ctx, "hello", nil, &hello); err != nil || !hello.Agent || !strings.Contains(hello.Why, "login session") {
+		t.Fatalf("hello on a broken chain: %+v %v", hello, err)
+	}
+	// No ancestors at all is no chain to the session either.
+	mu.Lock()
+	chain = nil
+	mu.Unlock()
+	if _, err := dial(t, sock).Human(ctx, "box"); err == nil {
+		t.Fatal("a process with no visible parent became the human")
+	}
+	// The same wrapper with its chain whole (the human's own terminal,
+	// where timeout's parent is still running) is the human.
+	mu.Lock()
+	chain = []proc.Info{{PID: 52228, PPID: 54200, Name: "timeout"}, {PID: 54200, PPID: 7000, Name: "bash"}, {PID: 7000, PPID: 1, Name: "windowsterminal"}, login}
+	mu.Unlock()
+	if h, err := dial(t, sock).Human(ctx, "box"); err != nil || h.Name != "human" {
+		t.Fatalf("the human's whole chain: %+v %v", h, err)
 	}
 }
 

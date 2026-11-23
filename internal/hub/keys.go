@@ -89,8 +89,14 @@ func (l *Local) key(id string) string {
 
 // Human registers (or refreshes) the operator's agent. It is not a hub
 // method: only code holding this machine's hub (the CLI, the dashboard)
-// can be the human. Honest limit: so can any process of the same OS user
-// that runs the CLI.
+// can be the human. Through the hub process, that code must also run in a
+// chain of processes that reaches the login session without an agent's
+// harness on the way (Server.notHuman); a broken chain is refused.
+// Honest limit: the process tree is evidence, not a boundary. A process of
+// the same OS user can leave its tree on purpose (WMI, the task scheduler,
+// a double fork) and come out rooted, or open the database itself when no
+// hub process runs. This stops an agent being taken for the human by
+// accident, not one that sets out to.
 func (l *Local) Human(ctx context.Context, machine string) (core.Agent, error) {
 	a, err := l.Store.Register(ctx, core.RegisterReq{
 		Harness: "human", Name: "human", Machine: machine, SessionID: "human@" + machine, Via: "cli", Delivery: "pull",
