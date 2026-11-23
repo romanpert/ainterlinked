@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -259,7 +260,21 @@ func errBrokenChain(chain []proc.Info) error {
 	if n := len(chain); n > 0 {
 		at = fmt.Sprintf("%s (pid %d)", chain[n-1].Name, chain[n-1].PID)
 	}
-	return fmt.Errorf("refused: the hub can't trace this process back to the login session: its parents stop at %s, whose parent is gone. "+
-		"A wrapper such as Git Bash's timeout or env, or Git Bash's own window, breaks the chain like that, and an agent's process looks the same, "+
-		"so this isn't the human operator; run the command straight from PowerShell, cmd, Windows Terminal or an IDE's terminal", at)
+	return fmt.Errorf("refused: the hub can't trace this process back to the login session: its parents stop at %s, whose parent is gone "+
+		"(%s), so this isn't the human operator.\n%s", at, brokenWhy[runtime.GOOS == "windows"], brokenFix[runtime.GOOS == "windows"])
 }
+
+// What breaks a chain, and what works instead, by OS (true: Windows). On
+// Unix an orphan goes to pid 1, so a chain breaks only in another PID
+// namespace, such as a container.
+var (
+	brokenWhy = map[bool]string{
+		true:  "Git Bash's timeout, env or window break the chain like that, and an agent's process looks the same",
+		false: "a container or another PID namespace hides the parents, and an agent's process may look the same",
+	}
+	brokenFix = map[bool]string{
+		true: "A terminal opened from the Start menu or taskbar (Windows Terminal, PowerShell, cmd) works, and so does an IDE started from the Start menu; " +
+			"an IDE launched with `code .` or relaunched by its updater may not: reopen it from the Start menu",
+		false: "Run it from a terminal of your own login session, not inside a container",
+	}
+)

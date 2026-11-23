@@ -52,23 +52,33 @@ func cmdTasksArchive(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Println(archiveReport(res))
+	if len(res.Failed) > 0 {
+		return fmt.Errorf("%d archive file(s) couldn't be written; their tasks stay on their boards", len(res.Failed))
+	}
 	return nil
 }
 
 func archiveReport(res core.ArchiveResult) string {
-	if res.Count == 0 {
+	if res.Count == 0 && len(res.Failed) == 0 {
 		return "Nothing to archive: no closed task matches."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Archived %d closed task(s); search still finds them (tasks --query).", res.Count)
 	for _, f := range res.Files {
-		ids := make([]string, len(f.IDs))
-		for i, id := range f.IDs {
-			ids[i] = fmt.Sprintf("#%d", id)
-		}
-		fmt.Fprintf(&b, "\n  %s → %s", strings.Join(ids, " "), tilde(f.Path))
+		fmt.Fprintf(&b, "\n  %s → %s", taskRefs(f.IDs), tilde(f.Path))
+	}
+	for _, f := range res.Failed {
+		fmt.Fprintf(&b, "\n  not archived: %s → %s: %s", taskRefs(f.IDs), tilde(f.Path), f.Error)
 	}
 	return b.String()
+}
+
+func taskRefs(ids []int64) string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = fmt.Sprintf("#%d", id)
+	}
+	return strings.Join(out, " ")
 }
 
 // parseAge reads 7d, 36h, 90m (or nothing: any age).

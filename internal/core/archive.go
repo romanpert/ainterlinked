@@ -1,10 +1,13 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,10 +48,19 @@ type ArchiveFile struct {
 	IDs  []int64 `json:"ids"`
 }
 
-// ArchiveResult says what was archived and where.
+// ArchiveFailure is a file that couldn't be written: its tasks stayed on
+// their board.
+type ArchiveFailure struct {
+	Path  string  `json:"path"`
+	IDs   []int64 `json:"ids"`
+	Error string  `json:"error"`
+}
+
+// ArchiveResult says what was archived and where, and which files failed.
 type ArchiveResult struct {
-	Count int           `json:"count"`
-	Files []ArchiveFile `json:"files,omitempty"`
+	Count  int              `json:"count"`
+	Files  []ArchiveFile    `json:"files,omitempty"`
+	Failed []ArchiveFailure `json:"failed,omitempty"`
 }
 
 // ArchiveTasks archives closed tasks for the human; agents can't.
@@ -75,70 +87,102 @@ func (s *Store) AutoArchive(ctx context.Context, after time.Duration, dir string
 	return s.archive(ctx, nil, ArchiveReq{OlderThan: after.Milliseconds(), Dir: dir})
 }
 
-// archive writes the tasks to their files first, synced, and only then
-// moves the rows, all inside one write transaction, so nobody changes them
-// in between. If the files can't be written nothing moves; if the move
-// fails after the write, the tasks stay on the board and a later run writes
-// them again: a task may appear twice in a file, never vanish from both.
+// archive archives file by file, each in its own write transaction: the
+// file's tasks are appended to it and synced, then their rows moved, so
+// nobody changes them in between. A file that can't be written keeps only
+// its own tasks on their boards (res.Failed), tried again next run; the
+// other files go ahead. If a move fails after its write, the tasks stay on
+// the board and the next run finds them in the file already (appendArchive
+// skips them): a task is never written twice, nor lost from both. It is an
+// error only when files failed and nothing was archived.
 func (s *Store) archive(ctx context.Context, by *Agent, r ArchiveReq) (ArchiveResult, error) {
 	if r.To == "" && r.Dir == "" {
 		return ArchiveResult{}, errors.New("no archive folder")
 	}
-	var res ArchiveResult
+	files := map[string][]string{} // path → its boards (none with To: r's scope)
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		now := s.ms()
-		list, err := closedTasks(tx, r, now)
-		if err != nil || len(list) == 0 {
-			return err
-		}
-		files := map[string][]Task{}
+		list, err := closedTasks(tx, r, nil, s.ms())
 		for _, t := range list {
 			p := r.To
 			if p == "" {
 				p = filepath.Join(r.Dir, fileSafe(t.Board)+".md")
+				if boards := files[p]; len(boards) > 0 && boards[len(boards)-1] == t.Board {
+					continue // sorted by board
+				}
 			}
-			files[p] = append(files[p], t)
+			files[p] = append(files[p], t.Board)
 		}
-		paths := make([]string, 0, len(files))
-		for p := range files {
-			paths = append(paths, p)
-		}
-		sort.Strings(paths)
-		for _, p := range paths {
-			if err := appendArchive(p, files[p], now); err != nil {
-				return fmt.Errorf("archive %s: %w", p, err)
-			}
-			f := ArchiveFile{Path: p}
-			for _, t := range files[p] {
-				f.IDs = append(f.IDs, t.ID)
-			}
-			res.Files = append(res.Files, f)
-		}
-		ids := make([]int64, len(list))
-		for i, t := range list {
-			ids[i] = t.ID
-		}
-		if err := moveToArchive(tx, ids, now); err != nil {
-			return err
-		}
-		res.Count = len(ids)
-		who := "the hub (archive_after_days)"
-		if by != nil {
-			who = by.Name
-		}
-		event(tx, now, by, "task", fmt.Sprintf("%s archived %d closed task(s)", who, len(ids)))
-		return nil
+		return err
 	})
 	if err != nil {
 		return ArchiveResult{}, err
 	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var res ArchiveResult
+	var failed []error
+	for _, p := range paths {
+		var boards []string
+		if r.To == "" {
+			boards = files[p]
+		}
+		f, err := s.archiveFile(ctx, by, r, p, boards)
+		if err != nil {
+			res.Failed = append(res.Failed, ArchiveFailure{Path: p, IDs: f.IDs, Error: err.Error()})
+			failed = append(failed, fmt.Errorf("archive %s: %w", p, err))
+		} else if len(f.IDs) > 0 {
+			res.Files = append(res.Files, f)
+			res.Count += len(f.IDs)
+		}
+	}
+	if res.Count == 0 && len(failed) > 0 {
+		return res, errors.Join(failed...)
+	}
 	return res, nil
 }
 
-func closedTasks(tx *sql.Tx, r ArchiveReq, now int64) ([]Task, error) {
+// archiveFile archives into path the closed tasks of boards (r's scope when
+// none) in one transaction. Its IDs are the tasks it tried, on error too.
+func (s *Store) archiveFile(ctx context.Context, by *Agent, r ArchiveReq, path string, boards []string) (ArchiveFile, error) {
+	f := ArchiveFile{Path: path}
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		now := s.ms()
+		list, err := closedTasks(tx, r, boards, now)
+		if err != nil || len(list) == 0 {
+			return err
+		}
+		for _, t := range list {
+			f.IDs = append(f.IDs, t.ID)
+		}
+		if err := appendArchive(path, list, now); err != nil {
+			return err
+		}
+		if err := moveToArchive(tx, f.IDs, now); err != nil {
+			return err
+		}
+		who := "the hub (archive_after_days)"
+		if by != nil {
+			who = by.Name
+		}
+		event(tx, now, by, "task", fmt.Sprintf("%s archived %d closed task(s) to %s", who, len(f.IDs), filepath.Base(path)))
+		return nil
+	})
+	return f, err
+}
+
+// closedTasks lists the closed tasks r archives, on boards when given.
+func closedTasks(tx *sql.Tx, r ArchiveReq, boards []string, now int64) ([]Task, error) {
 	q := `SELECT ` + taskCols + ` FROM tasks WHERE status IN ('done','cancelled')`
 	var args []any
-	if b := strings.ToLower(strings.TrimSpace(r.Board)); b != "" && b != "*" {
+	if len(boards) > 0 {
+		q += ` AND board IN (` + strings.TrimSuffix(strings.Repeat("?,", len(boards)), ",") + `)`
+		for _, b := range boards {
+			args = append(args, b)
+		}
+	} else if b := strings.ToLower(strings.TrimSpace(r.Board)); b != "" && b != "*" {
 		q += ` AND board=?`
 		args = append(args, b)
 	}
@@ -193,6 +237,17 @@ func moveToArchive(tx *sql.Tx, ids []int64, now int64) error {
 	return nil
 }
 
+// deviceNames are Windows' reserved file names: "con.md" opens the console,
+// not a file. Kept from board names on every OS, so a board has one file
+// name everywhere.
+var deviceNames = func() map[string]bool {
+	m := map[string]bool{"con": true, "prn": true, "aux": true, "nul": true}
+	for i := '0'; i <= '9'; i++ {
+		m["com"+string(i)], m["lpt"+string(i)] = true, true
+	}
+	return m
+}()
+
 // fileSafe turns a board name into a file name.
 func fileSafe(board string) string {
 	b := strings.Map(func(r rune) rune {
@@ -205,12 +260,51 @@ func fileSafe(board string) string {
 	if b = strings.Trim(b, "-."); b == "" {
 		return "default"
 	}
+	if stem, _, _ := strings.Cut(b, "."); deviceNames[strings.ToLower(stem)] {
+		return "_" + b
+	}
 	return b
 }
 
-// appendArchive appends tasks to a Markdown file and syncs it to disk.
+// entryHeading is the line an archived task's entry starts with.
+func entryHeading(t Task) string {
+	return fmt.Sprintf("## #%d %s (%s)", t.ID, t.Title, t.Status)
+}
+
+// headingsIn lists the entry headings already in an archive file.
+func headingsIn(path string) (map[string]bool, error) {
+	have := map[string]bool{}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return have, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	rd := bufio.NewReader(f)
+	for {
+		line, err := rd.ReadString('\n')
+		if strings.HasPrefix(line, "## #") {
+			have[strings.TrimRight(line, "\r\n")] = true
+		}
+		if errors.Is(err, io.EOF) {
+			return have, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+// appendArchive appends tasks to a Markdown file and syncs it to disk,
+// skipping those already in it (written by a run whose move then failed).
 func appendArchive(path string, list []Task, archivedAt int64) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	have, err := headingsIn(path)
+	if err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -222,7 +316,9 @@ func appendArchive(path string, list []Task, archivedAt int64) error {
 		b.WriteString("# Archived tasks\n")
 	}
 	for _, t := range list {
-		b.WriteString(archiveEntry(t, archivedAt))
+		if !have[entryHeading(t)] {
+			b.WriteString(archiveEntry(t, archivedAt))
+		}
 	}
 	if _, err := f.WriteString(b.String()); err != nil {
 		f.Close()
@@ -238,7 +334,7 @@ func appendArchive(path string, list []Task, archivedAt int64) error {
 func archiveEntry(t Task, archivedAt int64) string {
 	day := func(ms int64) string { return time.UnixMilli(ms).Format("2006-01-02 15:04") }
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n## #%d %s (%s)\n\n", t.ID, t.Title, t.Status)
+	b.WriteString("\n" + entryHeading(t) + "\n\n")
 	fmt.Fprintf(&b, "- board: %s · priority: P%d", t.Board, t.Priority)
 	if len(t.Labels) > 0 {
 		fmt.Fprintf(&b, " · labels: %s", strings.Join(t.Labels, ", "))

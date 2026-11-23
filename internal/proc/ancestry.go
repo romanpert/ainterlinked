@@ -86,7 +86,10 @@ var (
 // program like timeout, env, xargs or a nested bash from a forked process
 // that then exits, so the program's Windows parent is gone and the chain
 // stops there, below the agent harness that ran it. Broken counts as
-// unknown, and unknown is not the human.
+// unknown, and unknown is not the human. An IDE is broken the same way
+// when its launcher exited (`code .` from a terminal) or its updater
+// relaunched it, and so is every terminal inside it: the refusal says to
+// reopen it from the Start menu.
 //
 // The Windows roots, from the process trees of a Windows 11 box on
 // 2026-11-23:

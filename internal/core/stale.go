@@ -135,7 +135,7 @@ func (s *Store) StaleTasks(ctx context.Context, r StaleReq) (StaleList, error) {
 
 // NoticeStaleTasks tells, once per untouched stretch, about each todo,
 // review or blocked task nobody updated for the user's stale_after_days:
-// its creator if that agent still exists, else the human; a review always
+// its creator while that agent is online, else the human; a review always
 // the human (it waits for a person). One message per recipient per call.
 // A task stays noticed until it is updated (stale_noticed = its updated_at).
 // It returns how many tasks were noticed; nothing at all when the setting
@@ -217,14 +217,16 @@ func staleUnnoticed(tx *sql.Tx, cut int64) ([]Task, error) {
 	return out, rows.Err()
 }
 
-// staleRecipient is who hears about t: the human for a review or a task
-// whose creator is gone (or unknown), else the creator.
+// staleRecipient is who hears about t: the creator while it is online,
+// else the human; a review always the human. An offline creator would
+// never read the notice, the task would count as told, and the unread
+// notice would keep Prune from ever dropping the dead agent's row.
 func staleRecipient(tx *sql.Tx, t Task, human Agent) (Agent, error) {
 	if t.Status == "review" || t.CreatedByID == "" {
 		return human, nil
 	}
 	var a Agent
-	err := tx.QueryRow(`SELECT id, name, harness FROM agents WHERE id=?`, t.CreatedByID).Scan(&a.ID, &a.Name, &a.Harness)
+	err := tx.QueryRow(`SELECT id, name, harness FROM agents WHERE id=? AND online=1`, t.CreatedByID).Scan(&a.ID, &a.Name, &a.Harness)
 	if errors.Is(err, sql.ErrNoRows) {
 		return human, nil
 	}

@@ -134,12 +134,19 @@ func (s *Store) SearchTasks(ctx context.Context, f TaskFilter) (TaskPage, error)
 		args = append(args, id)
 	} else {
 		scope, sargs := s.taskScope(ctx, f)
-		q += scope
-		args = sargs
 		if len(grams) > 0 {
-			q += ` AND id IN (SELECT rowid FROM task_search WHERE task_search MATCH ? ORDER BY rank LIMIT ` + strconv.Itoa(searchCandidates) + `)`
+			// The scope narrows the candidates before their cap, or a busy
+			// board elsewhere could fill it and hide every match in scope.
+			cand := `SELECT rowid FROM task_search WHERE task_search MATCH ?`
 			args = append(args, matchExpr(grams))
+			if scope != "" {
+				cand += ` AND rowid IN (SELECT id FROM ` + foundTasks + ` WHERE 1=1` + scope + `)`
+				args = append(args, sargs...)
+			}
+			q += ` AND id IN (` + cand + ` ORDER BY rank LIMIT ` + strconv.Itoa(searchCandidates) + `)`
 		} else { // only words under three letters: no trigram to look up
+			q += scope
+			args = sargs
 			q += ` ORDER BY id DESC LIMIT ` + strconv.Itoa(5*searchCandidates)
 		}
 	}

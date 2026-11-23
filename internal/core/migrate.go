@@ -146,6 +146,11 @@ CREATE TRIGGER IF NOT EXISTS task_search_archive AFTER INSERT ON archived_tasks 
   INSERT INTO task_search(rowid,title,body,result,labels,people)
     VALUES(new.id, new.title, new.body, new.result, new.labels, new.assignee||' '||new.created_by);
 END;
+CREATE TRIGGER IF NOT EXISTS task_search_archive_edit AFTER UPDATE OF title,body,result,labels,assignee,created_by ON archived_tasks BEGIN
+  DELETE FROM task_search WHERE rowid=old.id;
+  INSERT INTO task_search(rowid,title,body,result,labels,people)
+    VALUES(new.id, new.title, new.body, new.result, new.labels, new.assignee||' '||new.created_by);
+END;
 CREATE TRIGGER IF NOT EXISTS task_search_unarchive AFTER DELETE ON archived_tasks
   WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=old.id) BEGIN
   DELETE FROM task_search WHERE rowid=old.id;

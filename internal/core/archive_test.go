@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -340,8 +341,80 @@ func TestContinueAsCarriesArchivedTasks(t *testing.T) {
 	}
 }
 
+// Each file is written and its rows moved on their own: a file that can't
+// be written keeps its own board's tasks, not the others', and the next run
+// doesn't append the others' again.
+func TestArchiveAFailingFileBlocksOnlyItsBoard(t *testing.T) {
+	b := newBoard(t)
+	ids := map[string]int64{}
+	for _, board := range []string{"aaa", "zzz"} {
+		task, err := b.CreateTask(b.ctx, TaskReq{By: b.human.ID, Board: board, Title: "closed on " + board})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.finish(task.ID, "done", "")
+		ids[board] = task.ID
+	}
+	bad := filepath.Join(b.dir, "zzz.md")
+	if err := os.Mkdir(bad, 0o700); err != nil { // a folder can't be appended to
+		t.Fatal(err)
+	}
+	for run := 1; run <= 2; run++ {
+		res, err := b.ArchiveTasks(b.ctx, ArchiveReq{By: b.human.ID, Dir: b.dir})
+		if len(res.Failed) != 1 || res.Failed[0].Path != bad || res.Failed[0].Error == "" || res.Failed[0].IDs[0] != ids["zzz"] {
+			t.Fatalf("run %d: the failing file is reported: %+v", run, res)
+		}
+		if run == 1 && (err != nil || res.Count != 1 || len(res.Files) != 1 || res.Files[0].IDs[0] != ids["aaa"]) {
+			t.Fatalf("run 1: aaa archived, no error: %+v %v", res, err)
+		}
+		// Nothing archived and a file failing is an error.
+		if run == 2 && (res.Count != 0 || err == nil || !strings.Contains(err.Error(), "zzz.md")) {
+			t.Fatalf("run 2: nothing more, an error naming the file: %+v %v", res, err)
+		}
+	}
+	if b.count("tasks") != 1 || b.count("archived_tasks") != 1 {
+		t.Fatalf("rows: %d on a board, %d archived", b.count("tasks"), b.count("archived_tasks"))
+	}
+	md, _ := os.ReadFile(filepath.Join(b.dir, "aaa.md"))
+	if n := strings.Count(string(md), fmt.Sprintf("## #%d ", ids["aaa"])); n != 1 {
+		t.Fatalf("aaa's task written %d times:\n%s", n, md)
+	}
+}
+
+// A crash after a file is written and before its rows move leaves the
+// tasks on the board; the next run doesn't write them twice.
+func TestArchiveSkipsTasksAlreadyInTheFile(t *testing.T) {
+	b := newBoard(t)
+	written := b.add("written before a crash", "")
+	b.finish(written.ID, "done", "")
+	fresh := b.add("not yet written", "")
+	b.finish(fresh.ID, "cancelled", "")
+	closed, err := b.ListTasks(b.ctx, TaskFilter{Board: "shop", Status: "done"})
+	if err != nil || len(closed) != 1 {
+		t.Fatalf("%+v %v", closed, err)
+	}
+	file := filepath.Join(b.dir, "shop.md")
+	if err := appendArchive(file, closed, b.ms()); err != nil {
+		t.Fatal(err)
+	}
+	res := b.archive(ArchiveReq{})
+	if res.Count != 2 || b.count("archived_tasks") != 2 {
+		t.Fatalf("both move: %+v", res)
+	}
+	md, _ := os.ReadFile(file)
+	for id, want := range map[int64]int{written.ID: 1, fresh.ID: 1} {
+		if n := strings.Count(string(md), fmt.Sprintf("## #%d ", id)); n != want {
+			t.Fatalf("#%d written %d times:\n%s", id, n, md)
+		}
+	}
+}
+
 func TestFileSafe(t *testing.T) {
-	for in, want := range map[string]string{"shop": "shop", "my app/v2": "my-app-v2", "..": "default", "": "default", "a:b": "a-b"} {
+	for in, want := range map[string]string{"shop": "shop", "my app/v2": "my-app-v2", "..": "default", "": "default", "a:b": "a-b",
+		// Windows device names, on every OS so a board has one file name everywhere.
+		"con": "_con", "CON": "_CON", "prn": "_prn", "Aux": "_Aux", "nul": "_nul", "com1": "_com1", "COM9": "_COM9", "lpt1": "_lpt1",
+		"lpt9": "_lpt9", "nul.txt": "_nul.txt", "con.tar.gz": "_con.tar.gz", "prn ": "_prn", "com0": "_com0",
+		"console": "console", "com10": "com10", "lpt": "lpt", "aux-x": "aux-x", "nully": "nully"} {
 		if got := fileSafe(in); got != want {
 			t.Errorf("fileSafe(%q) = %q, want %q", in, got, want)
 		}

@@ -156,6 +156,72 @@ func TestSearchIndexFollowsEdits(t *testing.T) {
 	}
 }
 
+// The board, status and assignee narrow the candidates before their cap: a
+// busy board elsewhere can't crowd a scoped search's exact match out.
+func TestAScopedSearchSeesPastOtherBoardsNoise(t *testing.T) {
+	b := newBoard(t)
+	target := b.add("Deploy pipeline", strings.Repeat("a long body about something else entirely ", 40))
+	tx, err := b.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < searchCandidates+100; i++ {
+		if _, err := tx.Exec(`INSERT INTO tasks(board,title,created_at,updated_at) VALUES('noise','deploy pipeline deploy pipeline',1,1)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Claim(b.ctx, b.worker.ID, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []TaskFilter{{Board: "shop"}, {Board: "*", Assignee: b.worker.Name}, {Board: "*", Status: "doing"},
+		{Board: "*", Mine: true, Agent: b.worker.ID}, {Board: "*", Open: true, Assignee: b.worker.Name}} {
+		f.Query = "deploy pipeline"
+		if p := b.search(f); len(p.Tasks) != 1 || p.Tasks[0].ID != target.ID {
+			t.Errorf("%+v: the one task in scope: %v", f, titles(p))
+		}
+	}
+	// Unscoped, the cap still holds.
+	if p := b.search(TaskFilter{Query: "deploy pipeline", Limit: maxSearchLimit}); len(p.Tasks)+p.More != searchCandidates {
+		t.Errorf("unscoped: %d shown + %d more, want the %d candidates", len(p.Tasks), p.More, searchCandidates)
+	}
+}
+
+// A successor taking over an archived task under another name is found by
+// that name.
+func TestSearchFollowsARenameOfArchivedWork(t *testing.T) {
+	b := newBoard(t)
+	task := b.add("ship the release", "")
+	b.finish(task.ID, "done", "")
+	b.archive(ArchiveReq{})
+	if err := b.Leave(b.ctx, b.worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	b.clock = b.clock.Add(time.Hour)
+	// Someone online holds the old name, so the successor keeps its own.
+	squatter := reg(t, b.Store, RegisterReq{Harness: "cursor", Project: "shop", AnchorPID: 3})
+	if _, err := b.db.Exec(`UPDATE agents SET name=? WHERE id=?`, b.worker.Name, squatter.ID); err != nil {
+		t.Fatal(err)
+	}
+	next := reg(t, b.Store, RegisterReq{Harness: "codex", Name: "successor", Project: "shop", AnchorPID: 2})
+	if _, err := b.ContinueAs(b.ctx, next.ID, b.worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	var assignee string
+	_ = b.db.QueryRow(`SELECT assignee FROM archived_tasks WHERE id=?`, task.ID).Scan(&assignee)
+	if assignee != "successor" {
+		t.Fatalf("archived task renamed: %q", assignee)
+	}
+	if p := b.search(TaskFilter{Query: "successor"}); len(p.Tasks) != 1 || p.Tasks[0].ID != task.ID {
+		t.Fatalf("found by the new name: %v", titles(p))
+	}
+	if p := b.search(TaskFilter{Query: b.worker.Name}); len(p.Tasks) != 0 {
+		t.Fatalf("not by the old one: %v", titles(p))
+	}
+}
+
 func TestShortQueriesScan(t *testing.T) {
 	b := newBoard(t)
 	b.add("UI polish", "")

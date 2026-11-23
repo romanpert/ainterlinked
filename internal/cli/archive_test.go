@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/romanpert/ainterlinked/internal/core"
 )
 
 func TestTasksBoardSearchAndArchive(t *testing.T) {
@@ -53,6 +55,21 @@ func TestTasksBoardSearchAndArchive(t *testing.T) {
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(project, "old.md")), "Reservación de sala (cancelled)") {
 		t.Fatal("--to old.md")
+	}
+}
+
+// A file that couldn't be written is named, with its tasks, not hidden
+// behind what was archived.
+func TestArchiveReportNamesFailedFiles(t *testing.T) {
+	res := core.ArchiveResult{Count: 1, Files: []core.ArchiveFile{{Path: "/a/shop.md", IDs: []int64{1}}},
+		Failed: []core.ArchiveFailure{{Path: "/a/web.md", IDs: []int64{2, 3}, Error: "is a directory"}}}
+	out := archiveReport(res)
+	if !strings.Contains(out, "Archived 1 closed task(s)") || !strings.Contains(out, "not archived: #2 #3 → /a/web.md: is a directory") {
+		t.Fatalf("report: %q", out)
+	}
+	res.Count, res.Files = 0, nil
+	if out = archiveReport(res); strings.Contains(out, "Nothing to archive") || !strings.Contains(out, "not archived: #2 #3") {
+		t.Fatalf("only failures: %q", out)
 	}
 }
 

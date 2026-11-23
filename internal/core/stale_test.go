@@ -218,6 +218,67 @@ func TestAnOrphanWaitsForTheHuman(t *testing.T) {
 	}
 }
 
+// A creator that went offline would never read its notice, and the unread
+// notice would pin its row forever: the human hears instead. A creator
+// still online hears about its own tasks.
+func TestAnOfflineCreatorsTasksGoToTheHuman(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	move := clockAt(s, time.Now())
+	s.SetStaleAfterDays(3)
+	online := reg(t, s, RegisterReq{Harness: "codex", Project: "shop", AnchorPID: 1})
+	offline := reg(t, s, RegisterReq{Harness: "gemini", Project: "shop", AnchorPID: 3})
+	human := reg(t, s, RegisterReq{Harness: "human", Name: "human", AnchorPID: 2})
+	if _, err := s.CreateTask(ctx, TaskReq{By: online.ID, Title: "mine"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateTask(ctx, TaskReq{By: offline.ID, Title: "left behind"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave(ctx, offline.ID); err != nil {
+		t.Fatal(err)
+	}
+	move(10 * testDay)
+	if n, err := s.NoticeStaleTasks(ctx); n != 2 || err != nil {
+		t.Fatalf("both tasks are noticed: %d %v", n, err)
+	}
+	if got := notices(t, s, offline.ID); len(got) != 0 {
+		t.Fatalf("an offline creator gets nothing it would never read: %+v", got)
+	}
+	got := notices(t, s, online.ID)
+	if len(got) != 1 || !strings.Contains(got[0].Body, "#1 [todo]") || strings.Contains(got[0].Body, "#2 ") {
+		t.Fatalf("the online creator hears about its own task alone: %+v", got)
+	}
+	got = notices(t, s, human.ID)
+	if len(got) != 1 || !strings.Contains(got[0].Body, "#2 [todo] P2 left behind") || strings.Contains(got[0].Body, "#1 ") {
+		t.Fatalf("the human hears about the offline creator's task: %+v", got)
+	}
+}
+
+// An offline creator and no human yet: the task waits, unmarked, and the
+// human gets it once it exists.
+func TestAnOfflineCreatorsTaskWaitsForTheHuman(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	move := clockAt(s, time.Now())
+	s.SetStaleAfterDays(1)
+	creator := reg(t, s, RegisterReq{Harness: "gemini", Project: "shop", AnchorPID: 3})
+	if _, err := s.CreateTask(ctx, TaskReq{By: creator.ID, Title: "left behind"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave(ctx, creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	move(2 * testDay)
+	if n, _ := s.NoticeStaleTasks(ctx); n != 0 || len(notices(t, s, creator.ID)) != 0 {
+		t.Fatalf("nobody online to tell: %d", n)
+	}
+	human := reg(t, s, RegisterReq{Harness: "human", Name: "human", AnchorPID: 2})
+	if n, _ := s.NoticeStaleTasks(ctx); n != 1 || len(notices(t, s, human.ID)) != 1 {
+		t.Fatalf("the human hears once it exists: %d", n)
+	}
+}
+
 // `tasks stale`: oldest first, the days asked for (else the user's
 // setting, else 14), tasks in progress too, closed ones never.
 func TestStaleTasksListsOldestFirst(t *testing.T) {

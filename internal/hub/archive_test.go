@@ -77,6 +77,63 @@ func TestTheHubArchivesOnlyWhenTheUserSaysSo(t *testing.T) {
 	}
 }
 
+// A board whose archive file can't be written doesn't hold the others back,
+// and the hub says so in its log, once per tick, instead of dropping it.
+func TestTheHubLogsABoardItCantArchive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("AINTERLINKED_HOME", home)
+	clock := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	st, err := core.Open(filepath.Join(home, "hub.db"), core.Options{Stale: time.Hour, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := NewServer(st)
+	ctx := context.Background()
+	me, err := NewLocal(st).Human(ctx, "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, board := range []string{"shop", "web"} {
+		task, err := st.CreateTask(ctx, core.TaskReq{By: me.ID, Board: board, Title: "old on " + board})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpdateTask(ctx, core.TaskUpdate{ID: task.ID, By: me.ID, Status: "done"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock = clock.Add(30 * 24 * time.Hour)
+	bad := filepath.Join(ArchiveDir(), "web.md")
+	if err := os.MkdirAll(bad, 0o700); err != nil { // a folder can't be appended to
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.Path(), []byte("[tasks]\narchive_after_days = 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv.followLimits("")
+	srv.archiveTick(ctx)
+	srv.archiveTick(ctx)
+	list, err := st.ListTasks(ctx, core.TaskFilter{Board: "*"})
+	if err != nil || len(list) != 1 || list[0].Board != "web" {
+		t.Fatalf("shop archived, web kept: %+v %v", list, err)
+	}
+	md, _ := os.ReadFile(filepath.Join(ArchiveDir(), "shop.md"))
+	if n := strings.Count(string(md), "## #1 "); n != 1 {
+		t.Fatalf("shop's task written %d times:\n%s", n, md)
+	}
+	log, _ := os.ReadFile(filepath.Join(home, "hub.log"))
+	n := 0
+	for _, line := range strings.Split(string(log), "\n") {
+		if strings.Contains(line, bad) {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("one log line per tick naming the file, got %d:\n%s", n, log)
+	}
+}
+
 // Agents read boards and search; archiving goes through the human only.
 func TestTaskArchiveIsTheHumans(t *testing.T) {
 	t.Setenv("AINTERLINKED_HOME", t.TempDir())

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -174,6 +175,8 @@ func TestABrokenChainIsNotTheHuman(t *testing.T) {
 	ctx := context.Background()
 	if _, err := dial(t, sock).Human(ctx, "box"); err == nil || !strings.Contains(err.Error(), "stop at timeout (pid 54200)") {
 		t.Fatalf("a chain broken by a wrapper became the human: %v", err)
+	} else if !strings.Contains(err.Error(), brokenFix[runtime.GOOS == "windows"]) || !strings.Contains(brokenFix[true], "`code .`") {
+		t.Fatalf("the refusal says what works and that an IDE launched with code . may not: %v", err)
 	}
 	var hello Hello
 	if err := dial(t, sock).Call(ctx, "hello", nil, &hello); err != nil || !hello.Agent || !strings.Contains(hello.Why, "login session") {
