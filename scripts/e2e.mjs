@@ -63,29 +63,49 @@ function hook(harness, event, payload) {
   return { out: r.stdout.trim() ? JSON.parse(r.stdout) : null, ms: Date.now() - t0, code: r.status };
 }
 // The human operator types in a terminal of their own, outside every agent's
-// harness, and the hub process checks the caller's whole chain of parents.
-// This test may itself run inside an agent (a developer's Claude Code), so
-// "the human" here is the CLI started from a process whose parent has exited:
-// detached from every harness. (The same detaching is open to an agent on the
-// same OS account: the real boundary for that is running the hub as another
-// account.)
-const ORPHAN = `
+// harness, and the hub process checks the caller's whole chain of parents up
+// to the login session. This test may itself run inside an agent (a
+// developer's Claude Code), so "the human" here is the CLI started outside
+// this script's tree with its chain still whole. On Unix that's a double
+// fork: the orphan is reparented to pid 1. On Windows an orphan's chain just
+// breaks, and a broken chain is refused, so the CLI is started through WMI's
+// Win32_Process.Create (hidden): it hangs under WmiPrvSE, svchost, services
+// and wininit. (The same escape is open to an agent on the same OS account:
+// the real boundary for that is running the hub as another account.)
+// A process WMI starts doesn't inherit this script's environment, so the run
+// takes the variables it needs from its job file.
+const HUMAN = join(HOME, "human.cjs");
+writeFileSync(HUMAN, `
 const cp=require('child_process'),fs=require('fs');
-const [bin,out,...args]=process.argv.slice(1);
-if(process.env.IL_STAGE!=='2'){
-  cp.spawn(process.execPath,['-e',process.env.IL_ORPHAN,...process.argv.slice(1)],{windowsHide:true,detached:true,stdio:'ignore',env:{...process.env,IL_STAGE:'2'}}).unref();
-  process.exit(0);
+const job=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(process.platform!=='win32'){
+  const ppid=process.ppid;
+  for(let i=0;i<200;i++){try{process.kill(ppid,0)}catch{break}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25)}
 }
-const ppid=process.ppid;
-for(let i=0;i<200;i++){try{process.kill(ppid,0)}catch{break}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25)}
-const r=cp.spawnSync(bin,args,{windowsHide:true,encoding:'utf8'});
-fs.writeFileSync(out+'.tmp',JSON.stringify({status:r.status,stdout:r.stdout||'',stderr:r.stderr||''}));
-fs.renameSync(out+'.tmp',out);`;
+const r=cp.spawnSync(job.bin,job.args,{windowsHide:true,encoding:'utf8',cwd:job.cwd,env:{...process.env,...job.env}});
+fs.writeFileSync(job.out+'.tmp',JSON.stringify({status:r.status,stdout:r.stdout||'',stderr:r.stderr||(r.error?String(r.error):'')}));
+fs.renameSync(job.out+'.tmp',job.out);`);
+const humanEnv = Object.fromEntries(Object.entries(env).filter(([k]) => k.startsWith("AINTERLINKED_") || k === "CLAUDE_CONFIG_DIR"));
+const psQuote = (s) => "'" + s.replaceAll("'", "''") + "'";
+const startAsHuman = (job) => {
+  if (process.platform !== "win32") {
+    const fork = "require('child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore'}).unref()";
+    return spawnSync(process.execPath, ["-e", fork, HUMAN, job], { windowsHide: true, env, cwd: PROJECT });
+  }
+  const cmd = `"${process.execPath}" "${HUMAN}" "${job}"`;
+  const ps = `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}
+$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${psQuote(cmd)}; CurrentDirectory=${psQuote(PROJECT)}; ProcessStartupInformation=$si}
+exit $r.ReturnValue`;
+  return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], { windowsHide: true, encoding: "utf8" });
+};
 let cliRuns = 0;
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const cli = (...args) => {
   const out = join(HOME, `cli-${++cliRuns}.json`);
-  spawnSync(process.execPath, ["-e", ORPHAN, BIN, out, ...args], { windowsHide: true, env: { ...env, IL_ORPHAN: ORPHAN }, cwd: PROJECT });
+  const job = out.replace(/\.json$/, ".job.json");
+  writeFileSync(job, JSON.stringify({ bin: BIN, args, out, cwd: PROJECT, env: humanEnv }));
+  const started = startAsHuman(job);
+  if (started.status !== 0) return { status: -1, stdout: "", stderr: `the human's CLI didn't start: ${started.status} ${started.stderr || ""}` };
   for (let i = 0; i < 600 && !existsSync(out); i++) sleepSync(25);
   return existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : { status: -1, stdout: "", stderr: "the detached CLI never answered" };
 };
