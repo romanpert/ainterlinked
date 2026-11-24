@@ -33,6 +33,15 @@ func TestReleaseFilesReleasesOnlyWhatItNames(t *testing.T) {
 	if h := held(); strings.Contains(h, "cart.js") || !strings.Contains(h, "menu.js") || !strings.Contains(h, "pay.js") {
 		t.Fatalf("after releasing cart.js: %s", h)
 	}
+	if out, isErr := claude.tool("release_files", map[string]any{"paths": []string{"menu.js"}}); isErr || out != "released 1 reservation(s)" {
+		t.Fatalf("paths as a list of one: %s", out)
+	}
+	if h := held(); strings.Contains(h, "menu.js") || !strings.Contains(h, "pay.js") {
+		t.Fatalf("after releasing menu.js: %s", h)
+	}
+	if _, isErr := claude.tool("reserve_files", map[string]any{"paths": "menu.js"}); isErr {
+		t.Fatal("reserve_files with paths as one string")
+	}
 	for _, empty := range []any{[]string{}, "", []string{""}, 7} {
 		if out, isErr := claude.tool("release_files", map[string]any{"paths": empty}); !isErr || !strings.Contains(out, "paths") {
 			t.Fatalf("paths %#v released: %s", empty, out)
