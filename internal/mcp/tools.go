@@ -148,6 +148,10 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		var s string
 		if json.Unmarshal(r, &s) == nil {
 			_ = json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(s), "#")), v)
+			// A list sent as one string is that one item.
+			if list, ok := v.(*[]string); ok && len(*list) == 0 && strings.TrimSpace(s) != "" {
+				*list = []string{strings.TrimSpace(s)}
+			}
 		}
 	}
 	c := s.client
@@ -488,6 +492,20 @@ func (s *Server) dispatch(ctx context.Context, me, name string, raw json.RawMess
 		p := hub.ReleaseParam{Agent: me}
 		get("paths", &p.Paths)
 		get("to", &p.To)
+		// No paths releases them all, so paths that came but name nothing
+		// (empty, blank, not a list) is refused, not read as "all".
+		if r, ok := a["paths"]; ok && string(r) != "null" {
+			named := p.Paths[:0:0]
+			for _, path := range p.Paths {
+				if strings.TrimSpace(path) != "" {
+					named = append(named, path)
+				}
+			}
+			if len(named) == 0 {
+				return "", fmt.Errorf("paths names nothing to release (got %s): list the patterns, or leave paths out to release all of yours", r)
+			}
+			p.Paths = named
+		}
 		var r hub.ReleaseResult
 		if err := c.Call(ctx, "release", p, &r); err != nil {
 			return "", err
